@@ -1,14 +1,16 @@
 import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
+import { Input } from '@/components/ui/input';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Card, CardContent } from '@/components/ui/card';
+import { MediaPreview } from '@/components/MediaPreview';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuthContext } from '@/contexts/AuthContext';
 import { Comment, Profile } from '@/types/database';
 import { toast } from 'sonner';
 import { formatDistanceToNow } from 'date-fns';
-import { Send, Trash2 } from 'lucide-react';
+import { Send, Trash2, Image, MessageCircle } from 'lucide-react';
 
 interface CommentSectionProps {
   ticketId: string;
@@ -16,14 +18,17 @@ interface CommentSectionProps {
 
 interface CommentWithProfile extends Omit<Comment, 'profiles'> {
   profiles: Profile | null;
+  image_url?: string | null;
 }
 
 export function CommentSection({ ticketId }: CommentSectionProps) {
   const { user } = useAuthContext();
   const [comments, setComments] = useState<CommentWithProfile[]>([]);
   const [newComment, setNewComment] = useState('');
+  const [imageUrl, setImageUrl] = useState('');
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [showImageInput, setShowImageInput] = useState(false);
 
   useEffect(() => {
     fetchComments();
@@ -51,7 +56,6 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
       .order('created_at', { ascending: true });
 
     if (!error && data) {
-      // Fetch profiles for each comment
       const userIds = [...new Set(data.map(c => c.user_id))];
       const { data: profiles } = await supabase
         .from('profiles')
@@ -78,13 +82,16 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
       .insert({
         ticket_id: ticketId,
         user_id: user.id,
-        content: newComment.trim()
+        content: newComment.trim(),
+        image_url: imageUrl.trim() || null
       });
 
     if (error) {
       toast.error('Failed to post comment');
     } else {
       setNewComment('');
+      setImageUrl('');
+      setShowImageInput(false);
       toast.success('Comment posted');
     }
     setSubmitting(false);
@@ -104,60 +111,97 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
   };
 
   return (
-    <div className="space-y-4">
-      <h3 className="text-lg font-semibold">Comments ({comments.length})</h3>
+    <div className="space-y-6">
+      <div className="flex items-center gap-2">
+        <MessageCircle className="h-5 w-5 text-primary" />
+        <h3 className="text-lg font-semibold">Comments ({comments.length})</h3>
+      </div>
 
       {user && (
-        <form onSubmit={handleSubmit} className="flex gap-2">
-          <Textarea
-            placeholder="Write a comment..."
-            value={newComment}
-            onChange={(e) => setNewComment(e.target.value)}
-            className="min-h-[80px] resize-none"
-          />
-          <Button type="submit" disabled={submitting || !newComment.trim()} size="icon" className="h-10 w-10 shrink-0">
-            <Send className="h-4 w-4" />
-          </Button>
-        </form>
+        <Card className="glass border-border/50">
+          <CardContent className="pt-4">
+            <form onSubmit={handleSubmit} className="space-y-3">
+              <Textarea
+                placeholder="Write a comment..."
+                value={newComment}
+                onChange={(e) => setNewComment(e.target.value)}
+                className="min-h-[100px] resize-none glass border-border/50 focus:border-primary/50"
+              />
+              
+              {showImageInput && (
+                <Input
+                  placeholder="Image URL (optional)"
+                  value={imageUrl}
+                  onChange={(e) => setImageUrl(e.target.value)}
+                  className="glass border-border/50"
+                />
+              )}
+
+              <div className="flex items-center justify-between">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setShowImageInput(!showImageInput)}
+                  className="text-muted-foreground hover:text-foreground"
+                >
+                  <Image className="h-4 w-4 mr-2" />
+                  {showImageInput ? 'Hide' : 'Add'} Image
+                </Button>
+                
+                <Button type="submit" disabled={submitting || !newComment.trim()} className="gap-2 glow-sm">
+                  <Send className="h-4 w-4" />
+                  Post Comment
+                </Button>
+              </div>
+            </form>
+          </CardContent>
+        </Card>
       )}
 
       {!user && (
-        <Card>
-          <CardContent className="py-4 text-center text-muted-foreground">
+        <Card className="glass border-border/50">
+          <CardContent className="py-6 text-center text-muted-foreground">
             Sign in to leave a comment
           </CardContent>
         </Card>
       )}
 
-      <div className="space-y-3">
+      <div className="space-y-4">
         {loading ? (
-          <div className="text-center text-muted-foreground py-4">Loading comments...</div>
+          <div className="text-center text-muted-foreground py-8">Loading comments...</div>
         ) : comments.length === 0 ? (
-          <div className="text-center text-muted-foreground py-4">No comments yet</div>
+          <div className="text-center text-muted-foreground py-8">
+            No comments yet. Be the first to share your thoughts!
+          </div>
         ) : (
           comments.map((comment) => (
-            <Card key={comment.id}>
-              <CardContent className="py-3">
+            <Card key={comment.id} className="glass-hover border-border/50">
+              <CardContent className="pt-4">
                 <div className="flex items-start gap-3">
-                  <Avatar className="h-8 w-8">
-                    <AvatarFallback className="text-xs bg-secondary text-secondary-foreground">
+                  <Avatar className="h-9 w-9 ring-2 ring-border shrink-0">
+                    <AvatarFallback className="bg-gradient-to-br from-primary/80 to-purple-600/80 text-primary-foreground text-sm font-medium">
                       {comment.profiles?.username?.charAt(0).toUpperCase() || 'U'}
                     </AvatarFallback>
                   </Avatar>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm font-medium">{comment.profiles?.username || 'Unknown'}</span>
+                  <div className="flex-1 min-w-0 space-y-2">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-medium">{comment.profiles?.username || 'Unknown'}</span>
                       <span className="text-xs text-muted-foreground">
                         {formatDistanceToNow(new Date(comment.created_at), { addSuffix: true })}
                       </span>
                     </div>
-                    <p className="mt-1 text-sm text-foreground whitespace-pre-wrap">{comment.content}</p>
+                    <p className="text-foreground/90 whitespace-pre-wrap leading-relaxed">{comment.content}</p>
+                    
+                    {comment.image_url && (
+                      <MediaPreview imageUrl={comment.image_url} className="mt-2" />
+                    )}
                   </div>
                   {user?.id === comment.user_id && (
                     <Button
                       variant="ghost"
                       size="icon"
-                      className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                      className="h-8 w-8 text-muted-foreground hover:text-destructive hover:bg-destructive/10 shrink-0"
                       onClick={() => handleDelete(comment.id)}
                     >
                       <Trash2 className="h-4 w-4" />

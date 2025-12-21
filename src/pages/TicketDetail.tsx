@@ -6,6 +6,7 @@ import { TypeBadge } from '@/components/TypeBadge';
 import { VoteButtons } from '@/components/VoteButtons';
 import { CommentSection } from '@/components/CommentSection';
 import { AdminStatusUpdate } from '@/components/AdminStatusUpdate';
+import { MediaPreview } from '@/components/MediaPreview';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
@@ -13,11 +14,13 @@ import { supabase } from '@/integrations/supabase/client';
 import { useAuthContext } from '@/contexts/AuthContext';
 import { Ticket, Profile } from '@/types/database';
 import { formatDistanceToNow } from 'date-fns';
-import { ArrowLeft, Loader2, Trash2 } from 'lucide-react';
+import { ArrowLeft, Loader2, Trash2, Clock } from 'lucide-react';
 import { toast } from 'sonner';
 
 interface TicketWithProfile extends Omit<Ticket, 'profiles'> {
   profiles: Profile | null;
+  image_url?: string | null;
+  video_url?: string | null;
 }
 
 export default function TicketDetail() {
@@ -90,10 +93,16 @@ export default function TicketDetail() {
 
   return (
     <div className="min-h-screen bg-background">
+      {/* Background effects */}
+      <div className="fixed inset-0 overflow-hidden pointer-events-none">
+        <div className="absolute top-0 left-1/4 w-96 h-96 bg-primary/10 rounded-full blur-3xl" />
+        <div className="absolute bottom-1/4 right-1/4 w-64 h-64 bg-purple-600/10 rounded-full blur-3xl" />
+      </div>
+
       <Header />
-      <main className="container mx-auto px-4 py-8">
-        <Link to="/" className="inline-flex items-center gap-2 text-muted-foreground hover:text-foreground transition-colors mb-6">
-          <ArrowLeft className="h-4 w-4" />
+      <main className="relative container mx-auto px-4 py-8">
+        <Link to="/" className="inline-flex items-center gap-2 text-muted-foreground hover:text-foreground transition-colors mb-6 group">
+          <ArrowLeft className="h-4 w-4 group-hover:-translate-x-1 transition-transform" />
           Back to tickets
         </Link>
 
@@ -106,15 +115,18 @@ export default function TicketDetail() {
             />
           )}
 
-          <Card>
-            <CardHeader>
+          <Card className="glass border-border/50 overflow-hidden">
+            {/* Gradient accent */}
+            <div className="h-1 bg-gradient-to-r from-primary via-purple-500 to-primary" />
+            
+            <CardHeader className="pb-4">
               <div className="flex items-start justify-between gap-4">
                 <div className="flex-1">
-                  <div className="flex flex-wrap items-center gap-2 mb-3">
+                  <div className="flex flex-wrap items-center gap-2 mb-4">
                     <TypeBadge type={ticket.type} />
                     <StatusBadge status={ticket.status} />
                   </div>
-                  <h1 className="text-2xl font-bold text-foreground">{ticket.title}</h1>
+                  <h1 className="text-2xl md:text-3xl font-bold text-foreground">{ticket.title}</h1>
                 </div>
                 <VoteButtons
                   ticketId={ticket.id}
@@ -124,19 +136,22 @@ export default function TicketDetail() {
                 />
               </div>
             </CardHeader>
-            <CardContent>
-              <p className="text-foreground whitespace-pre-wrap mb-6">{ticket.description}</p>
+            <CardContent className="space-y-6">
+              <p className="text-foreground/90 whitespace-pre-wrap leading-relaxed">{ticket.description}</p>
               
-              <div className="flex items-center justify-between border-t border-border pt-4">
+              <MediaPreview imageUrl={ticket.image_url} videoUrl={ticket.video_url} />
+              
+              <div className="flex items-center justify-between pt-4 border-t border-border/50">
                 <div className="flex items-center gap-3">
-                  <Avatar className="h-8 w-8">
-                    <AvatarFallback className="text-xs bg-secondary text-secondary-foreground">
+                  <Avatar className="h-10 w-10 ring-2 ring-border">
+                    <AvatarFallback className="bg-gradient-to-br from-primary to-purple-600 text-primary-foreground font-medium">
                       {ticket.profiles?.username?.charAt(0).toUpperCase() || 'U'}
                     </AvatarFallback>
                   </Avatar>
                   <div>
-                    <div className="text-sm font-medium">{ticket.profiles?.username || 'Unknown'}</div>
-                    <div className="text-xs text-muted-foreground">
+                    <div className="font-medium">{ticket.profiles?.username || 'Unknown'}</div>
+                    <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                      <Clock className="h-3 w-3" />
                       {formatDistanceToNow(new Date(ticket.created_at), { addSuffix: true })}
                     </div>
                   </div>
@@ -146,7 +161,7 @@ export default function TicketDetail() {
                   <Button
                     variant="ghost"
                     size="sm"
-                    className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                    className="text-muted-foreground hover:text-destructive hover:bg-destructive/10"
                     onClick={handleDelete}
                   >
                     <Trash2 className="h-4 w-4 mr-2" />

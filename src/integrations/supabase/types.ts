@@ -19,6 +19,7 @@ export type Database = {
           content: string
           created_at: string
           id: string
+          image_url: string | null
           ticket_id: string
           user_id: string
         }
@@ -26,6 +27,7 @@ export type Database = {
           content: string
           created_at?: string
           id?: string
+          image_url?: string | null
           ticket_id: string
           user_id: string
         }
@@ -33,6 +35,7 @@ export type Database = {
           content?: string
           created_at?: string
           id?: string
+          image_url?: string | null
           ticket_id?: string
           user_id?: string
         }
@@ -82,36 +85,42 @@ export type Database = {
           description: string
           downvotes: number | null
           id: string
+          image_url: string | null
           status: Database["public"]["Enums"]["ticket_status"]
           title: string
           type: Database["public"]["Enums"]["ticket_type"]
           updated_at: string
           upvotes: number | null
           user_id: string
+          video_url: string | null
         }
         Insert: {
           created_at?: string
           description: string
           downvotes?: number | null
           id?: string
+          image_url?: string | null
           status?: Database["public"]["Enums"]["ticket_status"]
           title: string
           type?: Database["public"]["Enums"]["ticket_type"]
           updated_at?: string
           upvotes?: number | null
           user_id: string
+          video_url?: string | null
         }
         Update: {
           created_at?: string
           description?: string
           downvotes?: number | null
           id?: string
+          image_url?: string | null
           status?: Database["public"]["Enums"]["ticket_status"]
           title?: string
           type?: Database["public"]["Enums"]["ticket_type"]
           updated_at?: string
           upvotes?: number | null
           user_id?: string
+          video_url?: string | null
         }
         Relationships: []
       }

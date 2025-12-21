@@ -10,7 +10,7 @@ import {
 import { supabase } from '@/integrations/supabase/client';
 import { TicketStatus } from '@/types/database';
 import { toast } from 'sonner';
-import { Shield } from 'lucide-react';
+import { Shield, Loader2 } from 'lucide-react';
 
 interface AdminStatusUpdateProps {
   ticketId: string;
@@ -49,28 +49,33 @@ export function AdminStatusUpdate({ ticketId, currentStatus, onStatusChange }: A
   };
 
   return (
-    <div className="flex items-center gap-3 p-4 bg-accent/50 rounded-lg border border-accent">
-      <Shield className="h-5 w-5 text-accent-foreground" />
-      <span className="text-sm font-medium text-foreground">Admin Controls</span>
-      <Select value={status} onValueChange={(v) => setStatus(v as TicketStatus)}>
-        <SelectTrigger className="w-40">
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          {statusOptions.map((option) => (
-            <SelectItem key={option.value} value={option.value}>
-              {option.label}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-      <Button 
-        onClick={handleUpdate} 
-        disabled={loading || status === currentStatus}
-        size="sm"
-      >
-        Update
-      </Button>
+    <div className="flex flex-wrap items-center gap-3 p-4 rounded-xl glass border-primary/30 bg-primary/5">
+      <div className="flex items-center gap-2 text-primary">
+        <Shield className="h-5 w-5" />
+        <span className="font-medium">Admin Controls</span>
+      </div>
+      <div className="flex items-center gap-2 ml-auto">
+        <Select value={status} onValueChange={(v) => setStatus(v as TicketStatus)}>
+          <SelectTrigger className="w-40 glass border-border/50">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent className="glass border-border/50">
+            {statusOptions.map((option) => (
+              <SelectItem key={option.value} value={option.value}>
+                {option.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Button 
+          onClick={handleUpdate} 
+          disabled={loading || status === currentStatus}
+          size="sm"
+          className="glow-sm"
+        >
+          {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Update'}
+        </Button>
+      </div>
     </div>
   );
 }
