@@ -59,7 +59,7 @@ export default function TicketDetail() {
   };
 
   const handleDelete = async () => {
-    if (!ticket || !confirm('Are you sure you want to delete this ticket?')) return;
+    if (!ticket || !confirm('Are you sure you want to delete this report?')) return;
 
     const { error } = await supabase
       .from('tickets')
@@ -67,9 +67,9 @@ export default function TicketDetail() {
       .eq('id', ticket.id);
 
     if (error) {
-      toast.error('Failed to delete ticket');
+      toast.error('Failed to delete report');
     } else {
-      toast.success('Ticket deleted');
+      toast.success('Report deleted');
       navigate('/');
     }
   };
@@ -103,7 +103,7 @@ export default function TicketDetail() {
       <main className="relative container mx-auto px-4 py-8">
         <Link to="/" className="inline-flex items-center gap-2 text-muted-foreground hover:text-foreground transition-colors mb-6 group">
           <ArrowLeft className="h-4 w-4 group-hover:-translate-x-1 transition-transform" />
-          Back to tickets
+          Back to reports
         </Link>
 
         <div className="max-w-3xl mx-auto space-y-6">

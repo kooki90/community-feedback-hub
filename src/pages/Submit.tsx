@@ -82,7 +82,7 @@ export default function Submit() {
     if (error) {
       toast.error('Failed to submit ticket');
     } else {
-      toast.success('Ticket submitted successfully!');
+      toast.success('Report submitted successfully!');
       navigate(`/ticket/${data.id}`);
     }
     setFormLoading(false);
@@ -108,12 +108,12 @@ export default function Submit() {
       <main className="relative container mx-auto px-4 py-8">
         <Link to="/" className="inline-flex items-center gap-2 text-muted-foreground hover:text-foreground transition-colors mb-6 group">
           <ArrowLeft className="h-4 w-4 group-hover:-translate-x-1 transition-transform" />
-          Back to tickets
+          Back to reports
         </Link>
 
         <Card className="max-w-2xl mx-auto glass border-border/50">
           <CardHeader>
-            <CardTitle className="text-2xl gradient-text">Submit a Ticket</CardTitle>
+            <CardTitle className="text-2xl gradient-text">Submit a Report</CardTitle>
             <CardDescription>
               Report a bug, suggest an improvement, or request a new feature
             </CardDescription>
@@ -204,7 +204,7 @@ export default function Submit() {
 
               <div className="flex gap-3 pt-4">
                 <Button type="submit" disabled={formLoading} className="flex-1 h-12 glow-sm">
-                  {formLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Submit Ticket'}
+                  {formLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Submit Report'}
                 </Button>
                 <Link to="/">
                   <Button type="button" variant="outline" className="h-12 glass border-border/50">

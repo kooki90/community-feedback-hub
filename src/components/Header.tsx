@@ -25,7 +25,7 @@ export function Header() {
               <Bug className="h-5 w-5 text-primary-foreground" />
             </div>
           </div>
-          <span className="text-xl font-bold gradient-text">BugTracker</span>
+          <span className="text-xl font-bold gradient-text">LimeHelpDesk</span>
         </Link>
 
         {/* Desktop Navigation */}
@@ -35,7 +35,7 @@ export function Header() {
               <Link to="/submit">
                 <Button className="gap-2 glow-sm">
                   <Sparkles className="h-4 w-4" />
-                  Submit Ticket
+                  Submit Report
                 </Button>
               </Link>
               
@@ -100,7 +100,7 @@ export function Header() {
                 <Link to="/submit" onClick={() => setMobileMenuOpen(false)}>
                   <Button className="w-full gap-2">
                     <Sparkles className="h-4 w-4" />
-                    Submit Ticket
+                    Submit Report
                   </Button>
                 </Link>
                 <Button variant="ghost" className="w-full justify-start text-muted-foreground" onClick={() => { signOut(); setMobileMenuOpen(false); }}>

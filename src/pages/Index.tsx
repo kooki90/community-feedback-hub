@@ -97,8 +97,7 @@ export default function Index() {
             Community-driven feedback platform
           </div>
           <h1 className="text-4xl md:text-5xl font-bold mb-4">
-            <span className="gradient-text">Bug Tracker</span>
-            <span className="text-foreground"> & Feedback</span>
+            <span className="gradient-text">LimeHelpDesk</span>
           </h1>
           <p className="text-lg text-muted-foreground max-w-xl mx-auto">
             Report bugs, share suggestions, request features, and vote on ideas. 
@@ -127,7 +126,7 @@ export default function Index() {
           <div className="relative flex-1">
             <Search className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <Input
-              placeholder="Search tickets..."
+              placeholder="Search reports..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               className="pl-11 h-12 glass border-border/50 focus:border-primary/50"
@@ -137,7 +136,7 @@ export default function Index() {
             <Link to="/submit">
               <Button className="h-12 px-6 gap-2 glow-sm">
                 <Sparkles className="h-4 w-4" />
-                Submit Ticket
+                Submit Report
               </Button>
             </Link>
           )}
@@ -183,25 +182,25 @@ export default function Index() {
           </Button>
         </div>
 
-        {/* Tickets Grid */}
+        {/* Reports Grid */}
         {loading ? (
           <div className="flex justify-center py-20">
             <div className="flex flex-col items-center gap-4">
               <Loader2 className="h-8 w-8 animate-spin text-primary" />
-              <span className="text-muted-foreground">Loading tickets...</span>
+              <span className="text-muted-foreground">Loading reports...</span>
             </div>
           </div>
         ) : filteredTickets.length === 0 ? (
           <div className="text-center py-20">
             <div className="glass inline-block rounded-2xl p-12">
               <Bug className="h-12 w-12 mx-auto mb-4 text-muted-foreground opacity-50" />
-              <h3 className="text-lg font-semibold mb-2">No tickets found</h3>
+              <h3 className="text-lg font-semibold mb-2">No reports found</h3>
               <p className="text-muted-foreground mb-6">
-                {tickets.length === 0 ? 'Be the first to submit a ticket!' : 'Try adjusting your search or filters.'}
+                {tickets.length === 0 ? 'Be the first to submit a report!' : 'Try adjusting your search or filters.'}
               </p>
               {user && (
                 <Link to="/submit">
-                  <Button className="glow-sm">Submit First Ticket</Button>
+                  <Button className="glow-sm">Submit First Report</Button>
                 </Link>
               )}
             </div>
