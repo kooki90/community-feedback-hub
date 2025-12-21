@@ -45,7 +45,6 @@ export function VoteButtons({ ticketId, upvotes, downvotes, onVoteChange }: Vote
     setLoading(true);
     try {
       if (userVote === voteType) {
-        // Remove vote
         await supabase
           .from('votes')
           .delete()
@@ -53,7 +52,6 @@ export function VoteButtons({ ticketId, upvotes, downvotes, onVoteChange }: Vote
           .eq('user_id', user.id);
         setUserVote(null);
       } else if (userVote) {
-        // Change vote
         await supabase
           .from('votes')
           .update({ vote_type: voteType })
@@ -61,7 +59,6 @@ export function VoteButtons({ ticketId, upvotes, downvotes, onVoteChange }: Vote
           .eq('user_id', user.id);
         setUserVote(voteType);
       } else {
-        // New vote
         await supabase
           .from('votes')
           .insert({ ticket_id: ticketId, user_id: user.id, vote_type: voteType });
@@ -75,27 +72,40 @@ export function VoteButtons({ ticketId, upvotes, downvotes, onVoteChange }: Vote
     }
   };
 
+  const score = upvotes - downvotes;
+
   return (
-    <div className="flex items-center gap-1">
+    <div className="flex flex-col items-center gap-1 px-2">
       <Button
         variant="ghost"
-        size="sm"
+        size="icon"
         disabled={loading}
         onClick={() => handleVote('up')}
-        className={`h-8 gap-1 px-2 ${userVote === 'up' ? 'text-primary bg-primary/10' : ''}`}
+        className={`h-8 w-8 rounded-full transition-all ${
+          userVote === 'up' 
+            ? 'bg-primary/20 text-primary hover:bg-primary/30' 
+            : 'text-muted-foreground hover:text-primary hover:bg-primary/10'
+        }`}
       >
         <ThumbsUp className="h-4 w-4" />
-        <span className="text-xs font-medium">{upvotes}</span>
       </Button>
+      <span className={`text-sm font-bold tabular-nums ${
+        score > 0 ? 'text-primary' : score < 0 ? 'text-destructive' : 'text-muted-foreground'
+      }`}>
+        {score > 0 ? `+${score}` : score}
+      </span>
       <Button
         variant="ghost"
-        size="sm"
+        size="icon"
         disabled={loading}
         onClick={() => handleVote('down')}
-        className={`h-8 gap-1 px-2 ${userVote === 'down' ? 'text-destructive bg-destructive/10' : ''}`}
+        className={`h-8 w-8 rounded-full transition-all ${
+          userVote === 'down' 
+            ? 'bg-destructive/20 text-destructive hover:bg-destructive/30' 
+            : 'text-muted-foreground hover:text-destructive hover:bg-destructive/10'
+        }`}
       >
         <ThumbsDown className="h-4 w-4" />
-        <span className="text-xs font-medium">{downvotes}</span>
       </Button>
     </div>
   );
