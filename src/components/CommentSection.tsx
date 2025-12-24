@@ -1,19 +1,27 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Card, CardContent } from '@/components/ui/card';
 import { MediaPreview } from '@/components/MediaPreview';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuthContext } from '@/contexts/AuthContext';
 import { Profile } from '@/types/database';
 import { toast } from 'sonner';
 import { formatDistanceToNow } from 'date-fns';
-import { Send, Trash2, Image, MessageCircle, Reply, X } from 'lucide-react';
+import { Send, Trash2, Image, MessageCircle, Reply, X, Smile } from 'lucide-react';
 
 interface CommentSectionProps {
   ticketId: string;
+}
+
+interface Reaction {
+  emoji: string;
+  count: number;
+  users: string[];
+  hasReacted: boolean;
 }
 
 interface CommentWithProfile {
@@ -26,7 +34,10 @@ interface CommentWithProfile {
   parent_id?: string | null;
   profiles: Profile | null;
   replies?: CommentWithProfile[];
+  reactions?: Reaction[];
 }
+
+const EMOJI_OPTIONS = ['👍', '❤️', '😂', '😮', '😢', '🔥'];
 
 export function CommentSection({ ticketId }: CommentSectionProps) {
   const { user } = useAuthContext();
@@ -37,23 +48,51 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
   const [submitting, setSubmitting] = useState(false);
   const [showImageInput, setShowImageInput] = useState(false);
   const [replyingTo, setReplyingTo] = useState<CommentWithProfile | null>(null);
+  const [typingUsers, setTypingUsers] = useState<string[]>([]);
+  const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const channelRef = useRef<any>(null);
 
   useEffect(() => {
     fetchComments();
 
-    const channel = supabase
+    // Set up realtime for comments
+    const commentsChannel = supabase
       .channel('comments')
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'comments', filter: `ticket_id=eq.${ticketId}` },
         () => fetchComments()
       )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'comment_reactions' },
+        () => fetchComments()
+      )
       .subscribe();
 
+    // Set up presence for typing indicators
+    const presenceChannel = supabase.channel(`typing:${ticketId}`)
+      .on('presence', { event: 'sync' }, () => {
+        const state = presenceChannel.presenceState();
+        const users: string[] = [];
+        Object.values(state).forEach((presences: any) => {
+          presences.forEach((p: any) => {
+            if (p.typing && p.username && p.user_id !== user?.id) {
+              users.push(p.username);
+            }
+          });
+        });
+        setTypingUsers(users);
+      })
+      .subscribe();
+
+    channelRef.current = presenceChannel;
+
     return () => {
-      supabase.removeChannel(channel);
+      supabase.removeChannel(commentsChannel);
+      supabase.removeChannel(presenceChannel);
     };
-  }, [ticketId]);
+  }, [ticketId, user?.id]);
 
   const fetchComments = async () => {
     setLoading(true);
@@ -65,19 +104,51 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
 
     if (!error && data) {
       const userIds = [...new Set(data.map(c => c.user_id))];
-      const { data: profiles } = await supabase
-        .from('profiles')
-        .select('*')
-        .in('user_id', userIds);
+      const commentIds = data.map(c => c.id);
+
+      const [profilesResult, reactionsResult] = await Promise.all([
+        supabase.from('profiles').select('*').in('user_id', userIds),
+        supabase.from('comment_reactions').select('*').in('comment_id', commentIds)
+      ]);
+
+      const profileMap = new Map(profilesResult.data?.map(p => [p.user_id, p]) || []);
       
-      const profileMap = new Map(profiles?.map(p => [p.user_id, p]) || []);
-      
-      // Build threaded comments
-      const commentsWithProfiles = data.map(c => ({
-        ...c,
-        profiles: profileMap.get(c.user_id) || null,
-        replies: [] as CommentWithProfile[]
-      }));
+      // Group reactions by comment
+      const reactionsByComment = new Map<string, any[]>();
+      reactionsResult.data?.forEach(r => {
+        if (!reactionsByComment.has(r.comment_id)) {
+          reactionsByComment.set(r.comment_id, []);
+        }
+        reactionsByComment.get(r.comment_id)!.push(r);
+      });
+
+      // Build threaded comments with reactions
+      const commentsWithProfiles = data.map(c => {
+        const commentReactions = reactionsByComment.get(c.id) || [];
+        const emojiGroups = new Map<string, { count: number; users: string[]; hasReacted: boolean }>();
+        
+        commentReactions.forEach(r => {
+          if (!emojiGroups.has(r.emoji)) {
+            emojiGroups.set(r.emoji, { count: 0, users: [], hasReacted: false });
+          }
+          const group = emojiGroups.get(r.emoji)!;
+          group.count++;
+          group.users.push(r.user_id);
+          if (r.user_id === user?.id) group.hasReacted = true;
+        });
+
+        const reactions = Array.from(emojiGroups.entries()).map(([emoji, data]) => ({
+          emoji,
+          ...data
+        }));
+
+        return {
+          ...c,
+          profiles: profileMap.get(c.user_id) || null,
+          replies: [] as CommentWithProfile[],
+          reactions
+        };
+      });
 
       // Organize into parent-child structure
       const commentMap = new Map<string, CommentWithProfile>();
@@ -97,6 +168,34 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
       setComments(rootComments);
     }
     setLoading(false);
+  };
+
+  const handleTyping = async () => {
+    if (!user || !channelRef.current) return;
+
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('username')
+      .eq('user_id', user.id)
+      .maybeSingle();
+
+    await channelRef.current.track({
+      user_id: user.id,
+      username: profile?.username || 'Someone',
+      typing: true
+    });
+
+    if (typingTimeoutRef.current) {
+      clearTimeout(typingTimeoutRef.current);
+    }
+
+    typingTimeoutRef.current = setTimeout(async () => {
+      await channelRef.current?.track({
+        user_id: user.id,
+        username: profile?.username || 'Someone',
+        typing: false
+      });
+    }, 2000);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -139,6 +238,30 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
     }
   };
 
+  const handleReaction = async (commentId: string, emoji: string, hasReacted: boolean) => {
+    if (!user) {
+      toast.error('Sign in to react');
+      return;
+    }
+
+    if (hasReacted) {
+      await supabase
+        .from('comment_reactions')
+        .delete()
+        .eq('comment_id', commentId)
+        .eq('user_id', user.id)
+        .eq('emoji', emoji);
+    } else {
+      await supabase
+        .from('comment_reactions')
+        .insert({
+          comment_id: commentId,
+          user_id: user.id,
+          emoji
+        });
+    }
+  };
+
   const CommentItem = ({ comment, isReply = false }: { comment: CommentWithProfile; isReply?: boolean }) => (
     <div className={`${isReply ? 'ml-10' : ''}`}>
       <div className="flex items-start gap-2">
@@ -163,7 +286,56 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
               )}
             </div>
             
+            {/* Reactions display */}
+            {comment.reactions && comment.reactions.length > 0 && (
+              <div className="flex flex-wrap gap-1 mt-1">
+                {comment.reactions.map((reaction) => (
+                  <button
+                    key={reaction.emoji}
+                    onClick={() => handleReaction(comment.id, reaction.emoji, reaction.hasReacted)}
+                    className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-xs transition-colors ${
+                      reaction.hasReacted 
+                        ? 'bg-primary/20 border border-primary/50' 
+                        : 'bg-muted/50 border border-border/30 hover:bg-muted'
+                    }`}
+                  >
+                    <span>{reaction.emoji}</span>
+                    <span className="text-[10px] text-muted-foreground">{reaction.count}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+            
             <div className="flex items-center gap-1 mt-0.5">
+              {user && (
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-6 px-2 text-xs text-muted-foreground hover:text-primary"
+                    >
+                      <Smile className="h-3 w-3" />
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-auto p-2" side="top">
+                    <div className="flex gap-1">
+                      {EMOJI_OPTIONS.map((emoji) => (
+                        <button
+                          key={emoji}
+                          onClick={() => {
+                            const existing = comment.reactions?.find(r => r.emoji === emoji);
+                            handleReaction(comment.id, emoji, existing?.hasReacted || false);
+                          }}
+                          className="text-lg hover:scale-125 transition-transform p-1"
+                        >
+                          {emoji}
+                        </button>
+                      ))}
+                    </div>
+                  </PopoverContent>
+                </Popover>
+              )}
               {user && !isReply && (
                 <Button
                   variant="ghost"
@@ -230,8 +402,11 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
               <Textarea
                 placeholder={replyingTo ? "Write a reply..." : "Write a comment..."}
                 value={newComment}
-                onChange={(e) => setNewComment(e.target.value)}
-                className="min-h-[100px] resize-none glass border-border/50 focus:border-primary/50"
+                onChange={(e) => {
+                  setNewComment(e.target.value);
+                  handleTyping();
+                }}
+                className="min-h-[80px] resize-none glass border-border/50 focus:border-primary/50"
               />
               
               {showImageInput && (
@@ -257,7 +432,7 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
                 
                 <Button type="submit" disabled={submitting || !newComment.trim()} className="gap-2 glow-sm">
                   <Send className="h-4 w-4" />
-                  {replyingTo ? 'Post Reply' : 'Post Comment'}
+                  {replyingTo ? 'Reply' : 'Send'}
                 </Button>
               </div>
             </form>
@@ -271,6 +446,23 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
             Sign in to leave a comment
           </CardContent>
         </Card>
+      )}
+
+      {/* Typing indicator */}
+      {typingUsers.length > 0 && (
+        <div className="flex items-center gap-2 text-sm text-muted-foreground animate-pulse">
+          <div className="flex gap-1">
+            <span className="w-1.5 h-1.5 bg-primary rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+            <span className="w-1.5 h-1.5 bg-primary rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+            <span className="w-1.5 h-1.5 bg-primary rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+          </div>
+          <span>
+            {typingUsers.length === 1 
+              ? `${typingUsers[0]} is typing...`
+              : `${typingUsers.slice(0, 2).join(', ')}${typingUsers.length > 2 ? ` and ${typingUsers.length - 2} more` : ''} are typing...`
+            }
+          </span>
+        </div>
       )}
 
       <div className="space-y-3">
