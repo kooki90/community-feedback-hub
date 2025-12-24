@@ -106,83 +106,87 @@ export default function TicketDetail() {
           Back to reports
         </Link>
 
-        <div className="max-w-3xl mx-auto space-y-6">
-          {isAdmin && (
-            <AdminStatusUpdate
-              ticketId={ticket.id}
-              currentStatus={ticket.status}
-              onStatusChange={fetchTicket}
-            />
-          )}
+        <div className="flex gap-6 h-[calc(100vh-180px)]">
+          {/* Left side - Report details (fixed) */}
+          <div className="flex-1 min-w-0">
+            {isAdmin && (
+              <AdminStatusUpdate
+                ticketId={ticket.id}
+                currentStatus={ticket.status}
+                onStatusChange={fetchTicket}
+              />
+            )}
 
-          <Card className="glass border-border/50 overflow-hidden">
-            {/* Gradient accent */}
-            <div className="h-1 bg-gradient-to-r from-primary via-purple-500 to-primary" />
-            
-            <CardHeader className="pb-4">
-              <div className="flex items-start justify-between gap-4">
-                <div className="flex-1">
-                  <div className="flex flex-wrap items-center gap-2 mb-4">
-                    <TypeBadge type={ticket.type} />
-                    <StatusBadge status={ticket.status} />
+            <Card className="glass border-border/50 overflow-hidden mt-4">
+              {/* Gradient accent */}
+              <div className="h-1 bg-gradient-to-r from-primary via-purple-500 to-primary" />
+              
+              <CardHeader className="pb-4">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="flex-1">
+                    <div className="flex flex-wrap items-center gap-2 mb-4">
+                      <TypeBadge type={ticket.type} />
+                      <StatusBadge status={ticket.status} />
+                    </div>
+                    <h1 className="text-2xl md:text-3xl font-bold text-foreground">{ticket.title}</h1>
                   </div>
-                  <h1 className="text-2xl md:text-3xl font-bold text-foreground">{ticket.title}</h1>
+                  <VoteButtons
+                    ticketId={ticket.id}
+                    upvotes={ticket.upvotes}
+                    downvotes={ticket.downvotes}
+                    onVoteChange={fetchTicket}
+                  />
                 </div>
-                <VoteButtons
-                  ticketId={ticket.id}
-                  upvotes={ticket.upvotes}
-                  downvotes={ticket.downvotes}
-                  onVoteChange={fetchTicket}
-                />
-              </div>
-            </CardHeader>
-            <CardContent className="space-y-6">
-              <p className="text-foreground/90 whitespace-pre-wrap leading-relaxed">{ticket.description}</p>
-              
-              <MediaPreview imageUrl={ticket.image_url} videoUrl={ticket.video_url} />
-              
-              <div className="flex items-center justify-between pt-4 border-t border-border/50">
-                <div className="flex items-center gap-3">
-                  <Avatar className="h-10 w-10 ring-2 ring-border">
-                    <AvatarFallback className="bg-gradient-to-br from-primary to-purple-600 text-primary-foreground font-medium">
-                      {ticket.profiles?.username?.charAt(0).toUpperCase() || 'U'}
-                    </AvatarFallback>
-                  </Avatar>
-                  <div>
-                    <div className="font-medium">{ticket.profiles?.username || 'Unknown'}</div>
-                    <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                      <Clock className="h-3 w-3" />
-                      {formatDistanceToNow(new Date(ticket.created_at), { addSuffix: true })}
+              </CardHeader>
+              <CardContent className="space-y-6">
+                <p className="text-foreground/90 whitespace-pre-wrap leading-relaxed">{ticket.description}</p>
+                
+                <MediaPreview imageUrl={ticket.image_url} videoUrl={ticket.video_url} />
+                
+                <div className="flex items-center justify-between pt-4 border-t border-border/50">
+                  <div className="flex items-center gap-3">
+                    <Avatar className="h-10 w-10 ring-2 ring-border">
+                      <AvatarFallback className="bg-gradient-to-br from-primary to-purple-600 text-primary-foreground font-medium">
+                        {ticket.profiles?.username?.charAt(0).toUpperCase() || 'U'}
+                      </AvatarFallback>
+                    </Avatar>
+                    <div>
+                      <div className="font-medium">{ticket.profiles?.username || 'Unknown'}</div>
+                      <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                        <Clock className="h-3 w-3" />
+                        {formatDistanceToNow(new Date(ticket.created_at), { addSuffix: true })}
+                      </div>
                     </div>
                   </div>
+
+                  {isOwner && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+                      onClick={handleDelete}
+                    >
+                      <Trash2 className="h-4 w-4 mr-2" />
+                      Delete
+                    </Button>
+                  )}
                 </div>
-
-                {isOwner && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="text-muted-foreground hover:text-destructive hover:bg-destructive/10"
-                    onClick={handleDelete}
-                  >
-                    <Trash2 className="h-4 w-4 mr-2" />
-                    Delete
-                  </Button>
-                )}
-              </div>
-            </CardContent>
-          </Card>
-
-          {ticket.status !== 'rejected' && (
-            <CommentSection ticketId={ticket.id} />
-          )}
-          
-          {ticket.status === 'rejected' && (
-            <Card className="glass border-border/50">
-              <CardContent className="py-6 text-center text-muted-foreground">
-                This report has been rejected. Comments are disabled.
               </CardContent>
             </Card>
-          )}
+          </div>
+
+          {/* Right side - Comments (scrollable) */}
+          <div className="w-[400px] flex-shrink-0 overflow-y-auto">
+            {ticket.status !== 'rejected' ? (
+              <CommentSection ticketId={ticket.id} />
+            ) : (
+              <Card className="glass border-border/50">
+                <CardContent className="py-6 text-center text-muted-foreground">
+                  This report has been rejected. Comments are disabled.
+                </CardContent>
+              </Card>
+            )}
+          </div>
         </div>
       </main>
     </div>
