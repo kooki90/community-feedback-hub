@@ -20,6 +20,7 @@ export type Database = {
           created_at: string
           id: string
           image_url: string | null
+          parent_id: string | null
           ticket_id: string
           user_id: string
         }
@@ -28,6 +29,7 @@ export type Database = {
           created_at?: string
           id?: string
           image_url?: string | null
+          parent_id?: string | null
           ticket_id: string
           user_id: string
         }
@@ -36,10 +38,18 @@ export type Database = {
           created_at?: string
           id?: string
           image_url?: string | null
+          parent_id?: string | null
           ticket_id?: string
           user_id?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "comments_parent_id_fkey"
+            columns: ["parent_id"]
+            isOneToOne: false
+            referencedRelation: "comments"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "comments_ticket_id_fkey"
             columns: ["ticket_id"]
