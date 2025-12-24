@@ -77,8 +77,10 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
   };
 
   const scrollToBottom = (force = false) => {
+    const container = scrollContainerRef.current;
+    if (!container) return;
     if (force || isNearBottom()) {
-      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+      container.scrollTop = container.scrollHeight;
     }
   };
 

@@ -52,7 +52,7 @@ export default function TicketDetail() {
         .select('*')
         .eq('user_id', data.user_id)
         .maybeSingle();
-      
+
       setTicket({ ...data, profiles: profile } as TicketWithProfile);
     }
     setLoading(false);
@@ -120,7 +120,7 @@ export default function TicketDetail() {
             <Card className="glass border-border/50 overflow-hidden mt-4">
               {/* Gradient accent */}
               <div className="h-1 bg-gradient-to-r from-primary via-purple-500 to-primary" />
-              
+
               <CardHeader className="pb-4">
                 <div className="flex items-start justify-between gap-4">
                   <div className="flex-1">
@@ -140,9 +140,9 @@ export default function TicketDetail() {
               </CardHeader>
               <CardContent className="space-y-6">
                 <p className="text-foreground/90 whitespace-pre-wrap leading-relaxed">{ticket.description}</p>
-                
+
                 <MediaPreview imageUrl={ticket.image_url} videoUrl={ticket.video_url} />
-                
+
                 <div className="flex items-center justify-between pt-4 border-t border-border/50">
                   <div className="flex items-center gap-3">
                     <Avatar className="h-10 w-10 ring-2 ring-border">
@@ -176,7 +176,7 @@ export default function TicketDetail() {
           </div>
 
           {/* Right side - Comments (scrollable) */}
-          <div className="w-[400px] flex-shrink-0 overflow-y-auto">
+          <div className="w-[400px] flex-shrink-0">
             {ticket.status !== 'rejected' ? (
               <CommentSection ticketId={ticket.id} />
             ) : (
