@@ -58,8 +58,18 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editContent, setEditContent] = useState('');
   const [profilesMap, setProfilesMap] = useState<Map<string, Profile>>(new Map());
+  const [allProfiles, setAllProfiles] = useState<Profile[]>([]);
+  const [showMentions, setShowMentions] = useState(false);
+  const [mentionQuery, setMentionQuery] = useState('');
+  const [mentionIndex, setMentionIndex] = useState(0);
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const channelRef = useRef<any>(null);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  };
 
   const fetchComments = useCallback(async () => {
     setLoading(true);
@@ -73,14 +83,15 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
       const userIds = [...new Set(data.map(c => c.user_id))];
       const commentIds = data.map(c => c.id);
 
-      const [profilesResult, reactionsResult] = await Promise.all([
+      const [profilesResult, reactionsResult, allProfilesResult] = await Promise.all([
         supabase.from('profiles').select('*').in('user_id', userIds),
-        supabase.from('comment_reactions').select('*').in('comment_id', commentIds)
+        supabase.from('comment_reactions').select('*').in('comment_id', commentIds),
+        supabase.from('profiles').select('*')
       ]);
-
 
       const newProfilesMap = new Map(profilesResult.data?.map(p => [p.user_id, p]) || []);
       setProfilesMap(newProfilesMap);
+      setAllProfiles(allProfilesResult.data || []);
       
       // Group reactions by comment
       const reactionsByComment = new Map<string, any[]>();
@@ -91,10 +102,9 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
         reactionsByComment.get(r.comment_id)!.push(r);
       });
 
-      // Group reads by comment - fetch via direct query
+      // Group reads by comment
       const readsByComment = new Map<string, ReadReceipt[]>();
       
-      // Use raw fetch for the new table since types aren't updated yet
       try {
         const session = await supabase.auth.getSession();
         const readsResponse = await fetch(
@@ -169,11 +179,11 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
       });
 
       setComments(rootComments);
+      setTimeout(scrollToBottom, 100);
 
-      // Mark comments as read using fetch API
+      // Mark comments as read
       if (user && commentIds.length > 0) {
         try {
-          // First get current reads
           const session = await supabase.auth.getSession();
           const currentReadsRes = await fetch(
             `${import.meta.env.VITE_SUPABASE_URL}/rest/v1/comment_reads?user_id=eq.${user.id}&comment_id=in.(${commentIds.join(',')})`,
@@ -294,13 +304,67 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
     }, 2000);
   };
 
+  // Handle @mentions
+  const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const value = e.target.value;
+    setNewComment(value);
+    handleTyping();
+
+    // Check for @ mentions
+    const cursorPos = e.target.selectionStart || 0;
+    const textBeforeCursor = value.slice(0, cursorPos);
+    const mentionMatch = textBeforeCursor.match(/@(\w*)$/);
+
+    if (mentionMatch) {
+      setMentionQuery(mentionMatch[1].toLowerCase());
+      setShowMentions(true);
+      setMentionIndex(0);
+    } else {
+      setShowMentions(false);
+    }
+  };
+
+  const filteredProfiles = allProfiles.filter(p => 
+    p.username.toLowerCase().includes(mentionQuery) && p.user_id !== user?.id
+  ).slice(0, 5);
+
+  const insertMention = (username: string) => {
+    const cursorPos = textareaRef.current?.selectionStart || 0;
+    const textBeforeCursor = newComment.slice(0, cursorPos);
+    const textAfterCursor = newComment.slice(cursorPos);
+    const mentionMatch = textBeforeCursor.match(/@(\w*)$/);
+    
+    if (mentionMatch) {
+      const newText = textBeforeCursor.slice(0, -mentionMatch[0].length) + `@${username} ` + textAfterCursor;
+      setNewComment(newText);
+    }
+    setShowMentions(false);
+    textareaRef.current?.focus();
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (showMentions && filteredProfiles.length > 0) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setMentionIndex(prev => (prev + 1) % filteredProfiles.length);
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setMentionIndex(prev => (prev - 1 + filteredProfiles.length) % filteredProfiles.length);
+      } else if (e.key === 'Enter' || e.key === 'Tab') {
+        e.preventDefault();
+        insertMention(filteredProfiles[mentionIndex].username);
+      } else if (e.key === 'Escape') {
+        setShowMentions(false);
+      }
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user || !newComment.trim()) return;
 
     setSubmitting(true);
     
-    // Build insert object - use raw fetch to avoid type issues with parent_id
     const insertData: any = {
       ticket_id: ticketId,
       user_id: user.id,
@@ -324,7 +388,6 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
       setImageUrl('');
       setShowImageInput(false);
       setReplyingTo(null);
-      // Manually trigger refresh
       fetchComments();
     }
     setSubmitting(false);
@@ -398,6 +461,25 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
     }
   };
 
+  // Render @mentions in content
+  const renderContent = (content: string) => {
+    const parts = content.split(/(@\w+)/g);
+    return parts.map((part, i) => {
+      if (part.startsWith('@')) {
+        const username = part.slice(1);
+        const mentioned = allProfiles.find(p => p.username.toLowerCase() === username.toLowerCase());
+        if (mentioned) {
+          return (
+            <span key={i} className="text-primary font-medium bg-primary/10 rounded px-1">
+              {part}
+            </span>
+          );
+        }
+      }
+      return part;
+    });
+  };
+
   const CommentItem = ({ comment, isReply = false }: { comment: CommentWithProfile; isReply?: boolean }) => {
     const isEditing = editingId === comment.id;
     const isOwner = user?.id === comment.user_id;
@@ -413,7 +495,11 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
           </Avatar>
           <div className="flex-1 min-w-0">
             <div className="inline-block max-w-[85%]">
-              <div className="bg-card/80 rounded-2xl rounded-tl-sm px-3 py-2 border border-border/30">
+              <div className={`rounded-2xl px-3 py-2 border border-border/30 ${
+                isOwner 
+                  ? 'bg-primary/20 rounded-tr-sm' 
+                  : 'bg-card/80 rounded-tl-sm'
+              }`}>
                 <div className="flex items-center gap-2 mb-0.5">
                   <span className="text-xs font-medium text-foreground">{comment.profiles?.username || 'Unknown'}</span>
                   <span className="text-[10px] text-muted-foreground">
@@ -437,7 +523,7 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
                     </Button>
                   </div>
                 ) : (
-                  <p className="text-sm text-foreground/90 whitespace-pre-wrap">{comment.content}</p>
+                  <p className="text-sm text-foreground/90 whitespace-pre-wrap">{renderContent(comment.content)}</p>
                 )}
                 
                 {comment.image_url && !isEditing && (
@@ -559,14 +645,48 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
   };
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center gap-2">
+    <div className="flex flex-col h-[600px]">
+      <div className="flex items-center gap-2 pb-3 border-b border-border/50">
         <MessageCircle className="h-5 w-5 text-primary" />
         <h3 className="text-lg font-semibold">Comments ({comments.length})</h3>
       </div>
 
-      {user && (
-        <Card className="glass border-border/50">
+      {/* Messages area - scrollable */}
+      <div className="flex-1 overflow-y-auto py-4 space-y-3">
+        {loading ? (
+          <div className="text-center text-muted-foreground py-8">Loading comments...</div>
+        ) : comments.length === 0 ? (
+          <div className="text-center text-muted-foreground py-8">
+            No comments yet. Be the first to share your thoughts!
+          </div>
+        ) : (
+          comments.map((comment) => (
+            <CommentItem key={comment.id} comment={comment} />
+          ))
+        )}
+        <div ref={messagesEndRef} />
+      </div>
+
+      {/* Typing indicator */}
+      {typingUsers.length > 0 && (
+        <div className="flex items-center gap-2 text-sm text-muted-foreground py-2">
+          <div className="flex gap-1">
+            <span className="w-1.5 h-1.5 bg-primary rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+            <span className="w-1.5 h-1.5 bg-primary rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+            <span className="w-1.5 h-1.5 bg-primary rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+          </div>
+          <span>
+            {typingUsers.length === 1 
+              ? `${typingUsers[0]} is typing...`
+              : `${typingUsers.slice(0, 2).join(', ')}${typingUsers.length > 2 ? ` and ${typingUsers.length - 2} more` : ''} are typing...`
+            }
+          </span>
+        </div>
+      )}
+
+      {/* Input area at bottom */}
+      {user ? (
+        <Card className="glass border-border/50 mt-auto shrink-0">
           <CardContent className="pt-4">
             {replyingTo && (
               <div className="flex items-center justify-between bg-muted/30 rounded-md p-2 mb-3">
@@ -584,15 +704,39 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
               </div>
             )}
             <form onSubmit={handleSubmit} className="space-y-3">
-              <Textarea
-                placeholder={replyingTo ? "Write a reply..." : "Write a comment..."}
-                value={newComment}
-                onChange={(e) => {
-                  setNewComment(e.target.value);
-                  handleTyping();
-                }}
-                className="min-h-[80px] resize-none glass border-border/50 focus:border-primary/50"
-              />
+              <div className="relative">
+                <Textarea
+                  ref={textareaRef}
+                  placeholder={replyingTo ? "Write a reply... (use @ to mention)" : "Write a comment... (use @ to mention)"}
+                  value={newComment}
+                  onChange={handleInputChange}
+                  onKeyDown={handleKeyDown}
+                  className="min-h-[60px] resize-none glass border-border/50 focus:border-primary/50 pr-2"
+                />
+                
+                {/* Mentions dropdown */}
+                {showMentions && filteredProfiles.length > 0 && (
+                  <div className="absolute bottom-full left-0 mb-1 w-64 bg-popover border border-border rounded-md shadow-lg z-50">
+                    {filteredProfiles.map((profile, index) => (
+                      <button
+                        key={profile.id}
+                        type="button"
+                        onClick={() => insertMention(profile.username)}
+                        className={`w-full flex items-center gap-2 px-3 py-2 text-sm text-left hover:bg-muted/50 ${
+                          index === mentionIndex ? 'bg-muted/50' : ''
+                        }`}
+                      >
+                        <Avatar className="h-6 w-6">
+                          <AvatarFallback className="bg-primary/20 text-xs">
+                            {profile.username.charAt(0).toUpperCase()}
+                          </AvatarFallback>
+                        </Avatar>
+                        <span>@{profile.username}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
               
               {showImageInput && (
                 <Input
@@ -623,46 +767,13 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
             </form>
           </CardContent>
         </Card>
-      )}
-
-      {!user && (
-        <Card className="glass border-border/50">
+      ) : (
+        <Card className="glass border-border/50 mt-auto shrink-0">
           <CardContent className="py-6 text-center text-muted-foreground">
             Sign in to leave a comment
           </CardContent>
         </Card>
       )}
-
-      {/* Typing indicator */}
-      {typingUsers.length > 0 && (
-        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-          <div className="flex gap-1">
-            <span className="w-1.5 h-1.5 bg-primary rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-            <span className="w-1.5 h-1.5 bg-primary rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-            <span className="w-1.5 h-1.5 bg-primary rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
-          </div>
-          <span>
-            {typingUsers.length === 1 
-              ? `${typingUsers[0]} is typing...`
-              : `${typingUsers.slice(0, 2).join(', ')}${typingUsers.length > 2 ? ` and ${typingUsers.length - 2} more` : ''} are typing...`
-            }
-          </span>
-        </div>
-      )}
-
-      <div className="space-y-3">
-        {loading ? (
-          <div className="text-center text-muted-foreground py-8">Loading comments...</div>
-        ) : comments.length === 0 ? (
-          <div className="text-center text-muted-foreground py-8">
-            No comments yet. Be the first to share your thoughts!
-          </div>
-        ) : (
-          comments.map((comment) => (
-            <CommentItem key={comment.id} comment={comment} />
-          ))
-        )}
-      </div>
     </div>
   );
 }
