@@ -85,7 +85,7 @@ export default function Index() {
       <main className="container mx-auto px-4 py-8">
         {/* Hero Section */}
         <div className="text-center mb-8">
-          <h1 className="text-3xl font-bold mb-2 text-primary">LimeHelpDesk</h1>
+          <h1 className="text-3xl font-bold mb-2 text-primary">Patchly</h1>
           <p className="text-muted-foreground">
             Report bugs, share suggestions, and request features
           </p>
