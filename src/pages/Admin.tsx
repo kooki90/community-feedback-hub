@@ -106,19 +106,25 @@ export default function Admin() {
   };
 
   const deleteTicket = async (ticketId: string) => {
+    const adminToken = sessionStorage.getItem('admin_token');
+    
     // Optimistic update
     setTickets(prev => prev.filter(t => t.id !== ticketId));
     
-    const { error } = await supabase
-      .from('tickets')
-      .delete()
-      .eq('id', ticketId);
+    try {
+      const { data, error } = await supabase.functions.invoke('admin-delete-ticket', {
+        body: { ticketId, adminToken }
+      });
 
-    if (error) {
+      if (error || !data?.success) {
+        toast.error('Failed to delete ticket');
+        fetchTickets(); // Revert on error
+      } else {
+        toast.success('Ticket deleted');
+      }
+    } catch (error) {
       toast.error('Failed to delete ticket');
       fetchTickets(); // Revert on error
-    } else {
-      toast.success('Ticket deleted');
     }
   };
 
