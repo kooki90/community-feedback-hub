@@ -52,7 +52,7 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
   const [newComment, setNewComment] = useState('');
   const [imageUrl, setImageUrl] = useState('');
   const [initialLoading, setInitialLoading] = useState(true);
-  const [submitting, setSubmitting] = useState(false);
+  
   const [showImageInput, setShowImageInput] = useState(false);
   const [replyingTo, setReplyingTo] = useState<CommentWithProfile | null>(null);
   const [typingUsers, setTypingUsers] = useState<string[]>([]);
@@ -82,18 +82,33 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
       .order('created_at', { ascending: true });
 
     if (!error && data) {
-      const userIds = [...new Set(data.map(c => c.user_id))];
-      const commentIds = data.map(c => c.id);
+      const userIds = [...new Set(data.map((c) => c.user_id))];
+      const commentIds = data.map((c) => c.id);
 
-      const [profilesResult, reactionsResult, allProfilesResult] = await Promise.all([
-        supabase.from('profiles').select('*').in('user_id', userIds),
+      if (commentIds.length === 0) {
+        setComments([]);
+        if (isInitial) setInitialLoading(false);
+        return;
+      }
+
+      const [reactionsResult, readsResult] = await Promise.all([
         supabase.from('comment_reactions').select('*').in('comment_id', commentIds),
-        supabase.from('profiles').select('*')
+        supabase.from('comment_reads').select('comment_id,user_id').in('comment_id', commentIds),
       ]);
 
-      const newProfilesMap = new Map(profilesResult.data?.map(p => [p.user_id, p]) || []);
+      const readUserIds = [...new Set((readsResult.data || []).map((r: any) => r.user_id))];
+      const profileUserIds = [...new Set([...userIds, ...readUserIds])];
+
+      const { data: profilesData } = await supabase
+        .from('profiles')
+        .select('*')
+        .in('user_id', profileUserIds);
+
+      const newProfilesMap = new Map(profilesData?.map((p) => [p.user_id, p]) || []);
       setProfilesMap(newProfilesMap);
-      setAllProfiles(allProfilesResult.data || []);
+
+      // Mentions list is loaded separately, but keep a small fallback cache
+      setAllProfiles((prev) => (prev.length ? prev : profilesData || []));
       
       const reactionsByComment = new Map<string, any[]>();
       reactionsResult.data?.forEach((r: any) => {
@@ -104,35 +119,16 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
       });
 
       const readsByComment = new Map<string, ReadReceipt[]>();
-      
-      try {
-        const session = await supabase.auth.getSession();
-        const readsResponse = await fetch(
-          `${import.meta.env.VITE_SUPABASE_URL}/rest/v1/comment_reads?comment_id=in.(${commentIds.join(',')})`,
-          {
-            headers: {
-              'apikey': import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
-              'Authorization': `Bearer ${session.data.session?.access_token || import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`
-            }
-          }
-        );
-        const readsResultData = await readsResponse.json();
-        
-        if (Array.isArray(readsResultData)) {
-          readsResultData.forEach((r: any) => {
-            if (!readsByComment.has(r.comment_id)) {
-              readsByComment.set(r.comment_id, []);
-            }
-            const profile = newProfilesMap.get(r.user_id);
-            readsByComment.get(r.comment_id)!.push({
-              user_id: r.user_id,
-              username: profile?.username || 'Unknown'
-            });
-          });
+      (readsResult.data || []).forEach((r: any) => {
+        if (!readsByComment.has(r.comment_id)) {
+          readsByComment.set(r.comment_id, []);
         }
-      } catch (err) {
-        console.log('Could not fetch read receipts:', err);
-      }
+        const profile = newProfilesMap.get(r.user_id);
+        readsByComment.get(r.comment_id)!.push({
+          user_id: r.user_id,
+          username: profile?.username || 'Unknown',
+        });
+      });
 
       const commentsWithProfiles = data.map(c => {
         const commentReactions = reactionsByComment.get(c.id) || [];
@@ -383,38 +379,84 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
     setImageUrl('');
     setShowImageInput(false);
     setReplyingTo(null);
-    setSubmitting(true);
     setTimeout(scrollToBottom, 50);
 
     const insertData: any = {
       ticket_id: ticketId,
       user_id: user.id,
       content: optimisticComment.content,
-      image_url: optimisticComment.image_url
+      image_url: optimisticComment.image_url,
     };
-    
+
     if (optimisticComment.parent_id) {
       insertData.parent_id = optimisticComment.parent_id;
     }
 
-    const { error } = await supabase.from('comments').insert(insertData);
+    const { data: inserted, error } = await supabase
+      .from('comments')
+      .insert(insertData)
+      .select('*')
+      .maybeSingle();
 
-    if (error) {
+    if (error || !inserted) {
       console.error('Comment insert error:', error);
       toast.error('Failed to post comment');
       // Remove optimistic comment on error
       if (optimisticComment.parent_id) {
-        setComments(prev => prev.map(c => {
+        setComments((prev) =>
+          prev.map((c) => {
+            if (c.id === optimisticComment.parent_id) {
+              return { ...c, replies: (c.replies || []).filter((r) => r.id !== tempId) };
+            }
+            return c;
+          })
+        );
+      } else {
+        setComments((prev) => prev.filter((c) => c.id !== tempId));
+      }
+      return;
+    }
+
+    // Replace optimistic comment with server row (keeps UI instant but removes "sending" state)
+    if (optimisticComment.parent_id) {
+      setComments((prev) =>
+        prev.map((c) => {
           if (c.id === optimisticComment.parent_id) {
-            return { ...c, replies: (c.replies || []).filter(r => r.id !== tempId) };
+            return {
+              ...c,
+              replies: (c.replies || []).map((r) =>
+                r.id === tempId
+                  ? {
+                      ...r,
+                      id: inserted.id,
+                      created_at: inserted.created_at,
+                      image_url: inserted.image_url,
+                      parent_id: inserted.parent_id,
+                      isOptimistic: false,
+                    }
+                  : r
+              ),
+            };
           }
           return c;
-        }));
-      } else {
-        setComments(prev => prev.filter(c => c.id !== tempId));
-      }
+        })
+      );
+    } else {
+      setComments((prev) =>
+        prev.map((c) =>
+          c.id === tempId
+            ? {
+                ...c,
+                id: inserted.id,
+                created_at: inserted.created_at,
+                image_url: inserted.image_url,
+                parent_id: inserted.parent_id,
+                isOptimistic: false,
+              }
+            : c
+        )
+      );
     }
-    setSubmitting(false);
   };
 
   // Optimistic edit
@@ -868,7 +910,7 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
                   {showImageInput ? 'Hide' : 'Add'} Image
                 </Button>
                 
-                <Button type="submit" disabled={submitting || !newComment.trim()} className="gap-2 glow-sm">
+                <Button type="submit" disabled={!newComment.trim()} className="gap-2 glow-sm">
                   <Send className="h-4 w-4" />
                   {replyingTo ? 'Reply' : 'Send'}
                 </Button>
