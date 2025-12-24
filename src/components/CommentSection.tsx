@@ -41,6 +41,7 @@ interface CommentWithProfile {
   replies?: CommentWithProfile[];
   reactions?: Reaction[];
   readBy?: ReadReceipt[];
+  isOptimistic?: boolean;
 }
 
 const EMOJI_OPTIONS = ['👍', '❤️', '😂', '😮', '😢', '🔥'];
@@ -50,7 +51,7 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
   const [comments, setComments] = useState<CommentWithProfile[]>([]);
   const [newComment, setNewComment] = useState('');
   const [imageUrl, setImageUrl] = useState('');
-  const [loading, setLoading] = useState(false);
+  const [initialLoading, setInitialLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [showImageInput, setShowImageInput] = useState(false);
   const [replyingTo, setReplyingTo] = useState<CommentWithProfile | null>(null);
@@ -71,8 +72,9 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
 
-  const fetchComments = useCallback(async () => {
-    setLoading(true);
+  const fetchComments = useCallback(async (isInitial = false) => {
+    if (isInitial) setInitialLoading(true);
+    
     const { data, error } = await supabase
       .from('comments')
       .select('*')
@@ -93,7 +95,6 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
       setProfilesMap(newProfilesMap);
       setAllProfiles(allProfilesResult.data || []);
       
-      // Group reactions by comment
       const reactionsByComment = new Map<string, any[]>();
       reactionsResult.data?.forEach((r: any) => {
         if (!reactionsByComment.has(r.comment_id)) {
@@ -102,7 +103,6 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
         reactionsByComment.get(r.comment_id)!.push(r);
       });
 
-      // Group reads by comment
       const readsByComment = new Map<string, ReadReceipt[]>();
       
       try {
@@ -134,7 +134,6 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
         console.log('Could not fetch read receipts:', err);
       }
 
-      // Build threaded comments with reactions
       const commentsWithProfiles = data.map(c => {
         const commentReactions = reactionsByComment.get(c.id) || [];
         const emojiGroups = new Map<string, { count: number; users: string[]; hasReacted: boolean }>();
@@ -163,7 +162,6 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
         };
       });
 
-      // Organize into parent-child structure
       const commentMap = new Map<string, CommentWithProfile>();
       commentsWithProfiles.forEach(c => commentMap.set(c.id, c));
       
@@ -179,9 +177,9 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
       });
 
       setComments(rootComments);
-      setTimeout(scrollToBottom, 100);
+      if (isInitial) setTimeout(scrollToBottom, 100);
 
-      // Mark comments as read
+      // Mark comments as read (background)
       if (user && commentIds.length > 0) {
         try {
           const session = await supabase.auth.getSession();
@@ -221,42 +219,31 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
         }
       }
     }
-    setLoading(false);
+    if (isInitial) setInitialLoading(false);
   }, [ticketId, user]);
 
   useEffect(() => {
-    fetchComments();
+    fetchComments(true);
 
-    // Set up realtime subscriptions
     const channel = supabase
       .channel(`ticket-comments:${ticketId}`)
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'comments', filter: `ticket_id=eq.${ticketId}` },
-        (payload) => {
-          console.log('Comment change:', payload);
-          fetchComments();
-        }
+        () => fetchComments(false)
       )
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'comment_reactions' },
-        (payload) => {
-          console.log('Reaction change:', payload);
-          fetchComments();
-        }
+        () => fetchComments(false)
       )
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'comment_reads' },
-        (payload) => {
-          console.log('Read change:', payload);
-          fetchComments();
-        }
+        () => fetchComments(false)
       )
       .subscribe();
 
-    // Set up presence for typing indicators
     const presenceChannel = supabase.channel(`typing:${ticketId}`)
       .on('presence', { event: 'sync' }, () => {
         const state = presenceChannel.presenceState();
@@ -304,13 +291,11 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
     }, 2000);
   };
 
-  // Handle @mentions
   const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const value = e.target.value;
     setNewComment(value);
     handleTyping();
 
-    // Check for @ mentions
     const cursorPos = e.target.selectionStart || 0;
     const textBeforeCursor = value.slice(0, cursorPos);
     const mentionMatch = textBeforeCursor.match(/@(\w*)$/);
@@ -359,42 +344,99 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
     }
   };
 
+  // Optimistic submit
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user || !newComment.trim()) return;
 
-    setSubmitting(true);
+    const tempId = `temp-${Date.now()}`;
+    const profile = profilesMap.get(user.id) || allProfiles.find(p => p.user_id === user.id);
     
-    const insertData: any = {
+    const optimisticComment: CommentWithProfile = {
+      id: tempId,
       ticket_id: ticketId,
       user_id: user.id,
       content: newComment.trim(),
-      image_url: imageUrl.trim() || null
+      created_at: new Date().toISOString(),
+      image_url: imageUrl.trim() || null,
+      parent_id: replyingTo?.id || null,
+      profiles: profile || null,
+      replies: [],
+      reactions: [],
+      readBy: [],
+      isOptimistic: true
     };
-    
-    if (replyingTo?.id) {
-      insertData.parent_id = replyingTo.id;
+
+    // Add optimistically
+    if (replyingTo) {
+      setComments(prev => prev.map(c => {
+        if (c.id === replyingTo.id) {
+          return { ...c, replies: [...(c.replies || []), optimisticComment] };
+        }
+        return c;
+      }));
+    } else {
+      setComments(prev => [...prev, optimisticComment]);
     }
 
-    const { error } = await supabase
-      .from('comments')
-      .insert(insertData);
+    setNewComment('');
+    setImageUrl('');
+    setShowImageInput(false);
+    setReplyingTo(null);
+    setSubmitting(true);
+    setTimeout(scrollToBottom, 50);
+
+    const insertData: any = {
+      ticket_id: ticketId,
+      user_id: user.id,
+      content: optimisticComment.content,
+      image_url: optimisticComment.image_url
+    };
+    
+    if (optimisticComment.parent_id) {
+      insertData.parent_id = optimisticComment.parent_id;
+    }
+
+    const { error } = await supabase.from('comments').insert(insertData);
 
     if (error) {
       console.error('Comment insert error:', error);
-      toast.error('Failed to post comment: ' + error.message);
-    } else {
-      setNewComment('');
-      setImageUrl('');
-      setShowImageInput(false);
-      setReplyingTo(null);
-      fetchComments();
+      toast.error('Failed to post comment');
+      // Remove optimistic comment on error
+      if (optimisticComment.parent_id) {
+        setComments(prev => prev.map(c => {
+          if (c.id === optimisticComment.parent_id) {
+            return { ...c, replies: (c.replies || []).filter(r => r.id !== tempId) };
+          }
+          return c;
+        }));
+      } else {
+        setComments(prev => prev.filter(c => c.id !== tempId));
+      }
     }
     setSubmitting(false);
   };
 
+  // Optimistic edit
   const handleEdit = async (commentId: string) => {
     if (!editContent.trim()) return;
+
+    const originalContent = comments.find(c => c.id === commentId)?.content || 
+      comments.flatMap(c => c.replies || []).find(r => r.id === commentId)?.content;
+
+    // Update optimistically
+    setComments(prev => prev.map(c => {
+      if (c.id === commentId) {
+        return { ...c, content: editContent.trim() };
+      }
+      if (c.replies) {
+        return { ...c, replies: c.replies.map(r => r.id === commentId ? { ...r, content: editContent.trim() } : r) };
+      }
+      return c;
+    }));
+
+    setEditingId(null);
+    setEditContent('');
 
     const { error } = await supabase
       .from('comments')
@@ -403,15 +445,38 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
 
     if (error) {
       console.error('Edit error:', error);
-      toast.error('Failed to edit comment: ' + error.message);
-    } else {
-      setEditingId(null);
-      setEditContent('');
-      fetchComments();
+      toast.error('Failed to edit comment');
+      // Revert on error
+      setComments(prev => prev.map(c => {
+        if (c.id === commentId) {
+          return { ...c, content: originalContent || '' };
+        }
+        if (c.replies) {
+          return { ...c, replies: c.replies.map(r => r.id === commentId ? { ...r, content: originalContent || '' } : r) };
+        }
+        return c;
+      }));
     }
   };
 
+  // Optimistic delete
   const handleDelete = async (commentId: string) => {
+    const deletedComment = comments.find(c => c.id === commentId) || 
+      comments.flatMap(c => c.replies || []).find(r => r.id === commentId);
+    const parentId = deletedComment?.parent_id;
+
+    // Remove optimistically
+    if (parentId) {
+      setComments(prev => prev.map(c => {
+        if (c.id === parentId) {
+          return { ...c, replies: (c.replies || []).filter(r => r.id !== commentId) };
+        }
+        return c;
+      }));
+    } else {
+      setComments(prev => prev.filter(c => c.id !== commentId));
+    }
+
     const { error } = await supabase
       .from('comments')
       .delete()
@@ -419,18 +484,76 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
 
     if (error) {
       console.error('Delete error:', error);
-      toast.error('Failed to delete comment: ' + error.message);
-    } else {
-      fetchComments();
+      toast.error('Failed to delete comment');
+      // Restore on error
+      if (deletedComment) {
+        if (parentId) {
+          setComments(prev => prev.map(c => {
+            if (c.id === parentId) {
+              return { ...c, replies: [...(c.replies || []), deletedComment] };
+            }
+            return c;
+          }));
+        } else {
+          setComments(prev => [...prev, deletedComment]);
+        }
+      }
     }
   };
 
+  // Optimistic reaction
   const handleReaction = async (commentId: string, emoji: string, hasReacted: boolean) => {
     if (!user) {
       toast.error('Sign in to react');
       return;
     }
 
+    // Update optimistically
+    setComments(prev => prev.map(c => {
+      const updateReactions = (comment: CommentWithProfile): CommentWithProfile => {
+        if (comment.id === commentId) {
+          const reactions = [...(comment.reactions || [])];
+          const existingIdx = reactions.findIndex(r => r.emoji === emoji);
+          
+          if (hasReacted) {
+            // Remove reaction
+            if (existingIdx >= 0) {
+              reactions[existingIdx] = {
+                ...reactions[existingIdx],
+                count: reactions[existingIdx].count - 1,
+                users: reactions[existingIdx].users.filter(u => u !== user.id),
+                hasReacted: false
+              };
+              if (reactions[existingIdx].count === 0) {
+                reactions.splice(existingIdx, 1);
+              }
+            }
+          } else {
+            // Add reaction
+            if (existingIdx >= 0) {
+              reactions[existingIdx] = {
+                ...reactions[existingIdx],
+                count: reactions[existingIdx].count + 1,
+                users: [...reactions[existingIdx].users, user.id],
+                hasReacted: true
+              };
+            } else {
+              reactions.push({ emoji, count: 1, users: [user.id], hasReacted: true });
+            }
+          }
+          return { ...comment, reactions };
+        }
+        return comment;
+      };
+
+      const updated = updateReactions(c);
+      if (updated.replies) {
+        return { ...updated, replies: updated.replies.map(updateReactions) };
+      }
+      return updated;
+    }));
+
+    // Sync with server
     if (hasReacted) {
       const { error } = await supabase
         .from('comment_reactions')
@@ -441,27 +564,20 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
       
       if (error) {
         console.error('Remove reaction error:', error);
-      } else {
-        fetchComments();
+        fetchComments(false); // Revert by refetching
       }
     } else {
       const { error } = await supabase
         .from('comment_reactions')
-        .insert({
-          comment_id: commentId,
-          user_id: user.id,
-          emoji
-        });
+        .insert({ comment_id: commentId, user_id: user.id, emoji });
       
       if (error) {
         console.error('Add reaction error:', error);
-      } else {
-        fetchComments();
+        fetchComments(false); // Revert by refetching
       }
     }
   };
 
-  // Render @mentions in content
   const renderContent = (content: string) => {
     const parts = content.split(/(@\w+)/g);
     return parts.map((part, i) => {
@@ -486,7 +602,7 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
     const readByOthers = comment.readBy?.filter(r => r.user_id !== comment.user_id) || [];
 
     return (
-      <div className={`${isReply ? 'ml-10' : ''}`}>
+      <div className={`${isReply ? 'ml-10' : ''} ${comment.isOptimistic ? 'opacity-70' : ''}`}>
         <div className="flex items-start gap-2">
           <Avatar className="h-7 w-7 shrink-0">
             <AvatarFallback className="bg-gradient-to-br from-primary/80 to-purple-600/80 text-primary-foreground text-xs font-medium">
@@ -531,7 +647,6 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
                 )}
               </div>
 
-              {/* Read receipts */}
               {isOwner && readByOthers.length > 0 && (
                 <div className="flex items-center gap-1 mt-0.5 ml-1">
                   <CheckCheck className="h-3 w-3 text-primary" />
@@ -543,7 +658,6 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
                 </div>
               )}
               
-              {/* Reactions display */}
               {comment.reactions && comment.reactions.length > 0 && (
                 <div className="flex flex-wrap gap-1 mt-1">
                   {comment.reactions.map((reaction) => (
@@ -564,7 +678,7 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
               )}
               
               <div className="flex items-center gap-1 mt-0.5">
-                {user && (
+                {user && !comment.isOptimistic && (
                   <Popover>
                     <PopoverTrigger asChild>
                       <Button
@@ -593,7 +707,7 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
                     </PopoverContent>
                   </Popover>
                 )}
-                {user && !isReply && (
+                {user && !isReply && !comment.isOptimistic && (
                   <Button
                     variant="ghost"
                     size="sm"
@@ -604,7 +718,7 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
                     Reply
                   </Button>
                 )}
-                {isOwner && !isEditing && (
+                {isOwner && !isEditing && !comment.isOptimistic && (
                   <Button
                     variant="ghost"
                     size="sm"
@@ -617,7 +731,7 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
                     <Pencil className="h-3 w-3" />
                   </Button>
                 )}
-                {isOwner && (
+                {isOwner && !comment.isOptimistic && (
                   <Button
                     variant="ghost"
                     size="sm"
@@ -632,7 +746,6 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
           </div>
         </div>
 
-        {/* Render replies */}
         {comment.replies && comment.replies.length > 0 && (
           <div className="mt-1.5 space-y-1.5">
             {comment.replies.map((reply) => (
@@ -651,9 +764,8 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
         <h3 className="text-lg font-semibold">Comments ({comments.length})</h3>
       </div>
 
-      {/* Messages area - scrollable */}
       <div className="flex-1 overflow-y-auto py-4 space-y-3">
-        {loading ? (
+        {initialLoading ? (
           <div className="text-center text-muted-foreground py-8">Loading comments...</div>
         ) : comments.length === 0 ? (
           <div className="text-center text-muted-foreground py-8">
@@ -667,7 +779,6 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Typing indicator */}
       {typingUsers.length > 0 && (
         <div className="flex items-center gap-2 text-sm text-muted-foreground py-2">
           <div className="flex gap-1">
@@ -684,7 +795,6 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
         </div>
       )}
 
-      {/* Input area at bottom */}
       {user ? (
         <Card className="glass border-border/50 mt-auto shrink-0">
           <CardContent className="pt-4">
@@ -714,7 +824,6 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
                   className="min-h-[60px] resize-none glass border-border/50 focus:border-primary/50 pr-2"
                 />
                 
-                {/* Mentions dropdown */}
                 {showMentions && filteredProfiles.length > 0 && (
                   <div className="absolute bottom-full left-0 mb-1 w-64 bg-popover border border-border rounded-md shadow-lg z-50">
                     {filteredProfiles.map((profile, index) => (
