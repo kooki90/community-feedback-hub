@@ -172,7 +172,17 @@ export default function TicketDetail() {
             </CardContent>
           </Card>
 
-          <CommentSection ticketId={ticket.id} />
+          {ticket.status !== 'rejected' && (
+            <CommentSection ticketId={ticket.id} />
+          )}
+          
+          {ticket.status === 'rejected' && (
+            <Card className="glass border-border/50">
+              <CardContent className="py-6 text-center text-muted-foreground">
+                This report has been rejected. Comments are disabled.
+              </CardContent>
+            </Card>
+          )}
         </div>
       </main>
     </div>

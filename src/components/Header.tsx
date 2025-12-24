@@ -20,9 +20,9 @@ export function Header() {
       <div className="container mx-auto flex h-14 items-center justify-between px-4">
         <Link to="/" className="flex items-center gap-2">
           <div className="flex h-8 w-8 items-center justify-center rounded-md bg-primary">
-            <span className="text-primary-foreground font-bold text-sm">L</span>
+            <span className="text-primary-foreground font-bold text-sm">P</span>
           </div>
-          <span className="text-lg font-semibold">LimeHelpDesk</span>
+          <span className="text-lg font-semibold">Patchly</span>
         </Link>
 
         {/* Desktop Navigation */}
