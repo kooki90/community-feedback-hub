@@ -325,16 +325,6 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
     });
   }, []);
 
-  const handleReactionChange = useCallback(() => {
-    // Reactions are quick - just refetch to keep it simple
-    fetchComments(false);
-  }, [fetchComments]);
-
-  const handleReadChange = useCallback(() => {
-    // Read receipts change often - just refetch
-    fetchComments(false);
-  }, [fetchComments]);
-
   useEffect(() => {
     fetchComments(true);
 
@@ -354,16 +344,6 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
         'postgres_changes',
         { event: 'DELETE', schema: 'public', table: 'comments', filter: `ticket_id=eq.${ticketId}` },
         handleCommentDelete
-      )
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'comment_reactions' },
-        handleReactionChange
-      )
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'comment_reads' },
-        handleReadChange
       )
       .subscribe();
 
@@ -388,7 +368,7 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
       supabase.removeChannel(channel);
       supabase.removeChannel(presenceChannel);
     };
-  }, [ticketId, user?.id, fetchComments, handleCommentInsert, handleCommentUpdate, handleCommentDelete, handleReactionChange, handleReadChange]);
+  }, [ticketId, user?.id, fetchComments, handleCommentInsert, handleCommentUpdate, handleCommentDelete]);
 
   const handleTyping = async () => {
     if (!user || !channelRef.current) return;
