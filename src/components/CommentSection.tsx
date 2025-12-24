@@ -140,57 +140,59 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
   };
 
   const CommentItem = ({ comment, isReply = false }: { comment: CommentWithProfile; isReply?: boolean }) => (
-    <div className={`${isReply ? 'ml-8 border-l-2 border-border/50 pl-4' : ''}`}>
-      <Card className="glass-hover border-border/50">
-        <CardContent className="pt-4">
-          <div className="flex items-start gap-3">
-            <Avatar className="h-9 w-9 ring-2 ring-border shrink-0">
-              <AvatarFallback className="bg-gradient-to-br from-primary/80 to-purple-600/80 text-primary-foreground text-sm font-medium">
-                {comment.profiles?.username?.charAt(0).toUpperCase() || 'U'}
-              </AvatarFallback>
-            </Avatar>
-            <div className="flex-1 min-w-0 space-y-2">
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className="font-medium">{comment.profiles?.username || 'Unknown'}</span>
-                <span className="text-xs text-muted-foreground">
+    <div className={`${isReply ? 'ml-10' : ''}`}>
+      <div className="flex items-start gap-2">
+        <Avatar className="h-7 w-7 shrink-0">
+          <AvatarFallback className="bg-gradient-to-br from-primary/80 to-purple-600/80 text-primary-foreground text-xs font-medium">
+            {comment.profiles?.username?.charAt(0).toUpperCase() || 'U'}
+          </AvatarFallback>
+        </Avatar>
+        <div className="flex-1 min-w-0">
+          <div className="inline-block max-w-[85%]">
+            <div className="bg-card/80 rounded-2xl rounded-tl-sm px-3 py-2 border border-border/30">
+              <div className="flex items-center gap-2 mb-0.5">
+                <span className="text-xs font-medium text-foreground">{comment.profiles?.username || 'Unknown'}</span>
+                <span className="text-[10px] text-muted-foreground">
                   {formatDistanceToNow(new Date(comment.created_at), { addSuffix: true })}
                 </span>
               </div>
-              <p className="text-foreground/90 whitespace-pre-wrap leading-relaxed">{comment.content}</p>
+              <p className="text-sm text-foreground/90 whitespace-pre-wrap">{comment.content}</p>
               
               {comment.image_url && (
-                <MediaPreview imageUrl={comment.image_url} className="mt-2" />
+                <MediaPreview imageUrl={comment.image_url} className="mt-1.5" />
               )}
-
+            </div>
+            
+            <div className="flex items-center gap-1 mt-0.5">
               {user && !isReply && (
                 <Button
                   variant="ghost"
                   size="sm"
-                  className="text-muted-foreground hover:text-primary -ml-2 mt-1"
+                  className="h-6 px-2 text-xs text-muted-foreground hover:text-primary"
                   onClick={() => setReplyingTo(comment)}
                 >
-                  <Reply className="h-4 w-4 mr-1" />
+                  <Reply className="h-3 w-3 mr-1" />
                   Reply
                 </Button>
               )}
+              {user?.id === comment.user_id && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 px-2 text-xs text-muted-foreground hover:text-destructive"
+                  onClick={() => handleDelete(comment.id)}
+                >
+                  <Trash2 className="h-3 w-3" />
+                </Button>
+              )}
             </div>
-            {user?.id === comment.user_id && (
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-8 w-8 text-muted-foreground hover:text-destructive hover:bg-destructive/10 shrink-0"
-                onClick={() => handleDelete(comment.id)}
-              >
-                <Trash2 className="h-4 w-4" />
-              </Button>
-            )}
           </div>
-        </CardContent>
-      </Card>
+        </div>
+      </div>
 
       {/* Render replies */}
       {comment.replies && comment.replies.length > 0 && (
-        <div className="mt-2 space-y-2">
+        <div className="mt-1.5 space-y-1.5">
           {comment.replies.map((reply) => (
             <CommentItem key={reply.id} comment={reply} isReply />
           ))}
@@ -271,7 +273,7 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
         </Card>
       )}
 
-      <div className="space-y-4">
+      <div className="space-y-3">
         {loading ? (
           <div className="text-center text-muted-foreground py-8">Loading comments...</div>
         ) : comments.length === 0 ? (
