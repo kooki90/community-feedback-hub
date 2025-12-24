@@ -95,27 +95,34 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
       const readsByComment = new Map<string, ReadReceipt[]>();
       
       // Use raw fetch for the new table since types aren't updated yet
-      const readsResponse = await fetch(
-        `${import.meta.env.VITE_SUPABASE_URL}/rest/v1/comment_reads?comment_id=in.(${commentIds.join(',')})`,
-        {
-          headers: {
-            'apikey': import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
-            'Authorization': `Bearer ${(await supabase.auth.getSession()).data.session?.access_token || import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`
+      try {
+        const session = await supabase.auth.getSession();
+        const readsResponse = await fetch(
+          `${import.meta.env.VITE_SUPABASE_URL}/rest/v1/comment_reads?comment_id=in.(${commentIds.join(',')})`,
+          {
+            headers: {
+              'apikey': import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
+              'Authorization': `Bearer ${session.data.session?.access_token || import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`
+            }
           }
+        );
+        const readsResultData = await readsResponse.json();
+        
+        if (Array.isArray(readsResultData)) {
+          readsResultData.forEach((r: any) => {
+            if (!readsByComment.has(r.comment_id)) {
+              readsByComment.set(r.comment_id, []);
+            }
+            const profile = newProfilesMap.get(r.user_id);
+            readsByComment.get(r.comment_id)!.push({
+              user_id: r.user_id,
+              username: profile?.username || 'Unknown'
+            });
+          });
         }
-      );
-      const readsResultData = await readsResponse.json() as any[];
-      
-      readsResultData?.forEach((r: any) => {
-        if (!readsByComment.has(r.comment_id)) {
-          readsByComment.set(r.comment_id, []);
-        }
-        const profile = newProfilesMap.get(r.user_id);
-        readsByComment.get(r.comment_id)!.push({
-          user_id: r.user_id,
-          username: profile?.username || 'Unknown'
-        });
-      });
+      } catch (err) {
+        console.log('Could not fetch read receipts:', err);
+      }
 
       // Build threaded comments with reactions
       const commentsWithProfiles = data.map(c => {
@@ -165,26 +172,42 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
 
       // Mark comments as read using fetch API
       if (user && commentIds.length > 0) {
-        const unreadComments = data.filter(c => 
-          c.user_id !== user.id && 
-          !readsResultData?.some((r: any) => r.comment_id === c.id && r.user_id === user.id)
-        );
-        
-        if (unreadComments.length > 0) {
+        try {
+          // First get current reads
           const session = await supabase.auth.getSession();
-          await fetch(
-            `${import.meta.env.VITE_SUPABASE_URL}/rest/v1/comment_reads`,
+          const currentReadsRes = await fetch(
+            `${import.meta.env.VITE_SUPABASE_URL}/rest/v1/comment_reads?user_id=eq.${user.id}&comment_id=in.(${commentIds.join(',')})`,
             {
-              method: 'POST',
               headers: {
                 'apikey': import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
-                'Authorization': `Bearer ${session.data.session?.access_token || import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
-                'Content-Type': 'application/json',
-                'Prefer': 'return=minimal'
-              },
-              body: JSON.stringify(unreadComments.map(c => ({ comment_id: c.id, user_id: user.id })))
+                'Authorization': `Bearer ${session.data.session?.access_token || import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`
+              }
             }
           );
+          const currentReads = await currentReadsRes.json();
+          const readCommentIds = Array.isArray(currentReads) ? currentReads.map((r: any) => r.comment_id) : [];
+          
+          const unreadComments = data.filter(c => 
+            c.user_id !== user.id && !readCommentIds.includes(c.id)
+          );
+          
+          if (unreadComments.length > 0) {
+            await fetch(
+              `${import.meta.env.VITE_SUPABASE_URL}/rest/v1/comment_reads`,
+              {
+                method: 'POST',
+                headers: {
+                  'apikey': import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
+                  'Authorization': `Bearer ${session.data.session?.access_token || import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
+                  'Content-Type': 'application/json',
+                  'Prefer': 'return=minimal'
+                },
+                body: JSON.stringify(unreadComments.map(c => ({ comment_id: c.id, user_id: user.id })))
+              }
+            );
+          }
+        } catch (err) {
+          console.log('Could not mark comments as read:', err);
         }
       }
     }
