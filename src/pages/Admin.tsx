@@ -4,7 +4,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { toast } from 'sonner';
-import { Shield, Loader2 } from 'lucide-react';
+import { Shield, Loader2, Trash2 } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { Ticket, Profile, TicketStatus } from '@/types/database';
 import { StatusBadge } from '@/components/StatusBadge';
@@ -105,6 +105,23 @@ export default function Admin() {
     }
   };
 
+  const deleteTicket = async (ticketId: string) => {
+    // Optimistic update
+    setTickets(prev => prev.filter(t => t.id !== ticketId));
+    
+    const { error } = await supabase
+      .from('tickets')
+      .delete()
+      .eq('id', ticketId);
+
+    if (error) {
+      toast.error('Failed to delete ticket');
+      fetchTickets(); // Revert on error
+    } else {
+      toast.success('Ticket deleted');
+    }
+  };
+
   if (!isAuthenticated) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center p-4">
@@ -187,21 +204,30 @@ export default function Admin() {
                       by {ticket.profiles?.username || 'Unknown'}
                     </p>
                   </div>
-                  <Select
-                    value={ticket.status}
-                    onValueChange={(value: TicketStatus) => updateStatus(ticket.id, value)}
-                  >
-                    <SelectTrigger className="w-[140px]">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="pending">Pending</SelectItem>
-                      <SelectItem value="in_progress">In Progress</SelectItem>
-                      <SelectItem value="accepted">Accepted</SelectItem>
-                      <SelectItem value="resolved">Resolved</SelectItem>
-                      <SelectItem value="rejected">Rejected</SelectItem>
-                    </SelectContent>
-                  </Select>
+                  <div className="flex items-center gap-2">
+                    <Select
+                      value={ticket.status}
+                      onValueChange={(value: TicketStatus) => updateStatus(ticket.id, value)}
+                    >
+                      <SelectTrigger className="w-[140px]">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="pending">Pending</SelectItem>
+                        <SelectItem value="in_progress">In Progress</SelectItem>
+                        <SelectItem value="accepted">Accepted</SelectItem>
+                        <SelectItem value="resolved">Resolved</SelectItem>
+                        <SelectItem value="rejected">Rejected</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <Button
+                      variant="destructive"
+                      size="icon"
+                      onClick={() => deleteTicket(ticket.id)}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
                 </div>
               </Card>
             ))}
