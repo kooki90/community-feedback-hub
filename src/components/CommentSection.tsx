@@ -51,8 +51,8 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
   const [comments, setComments] = useState<CommentWithProfile[]>([]);
   const [newComment, setNewComment] = useState('');
   const [imageUrl, setImageUrl] = useState('');
-  
-  
+
+
   const [showImageInput, setShowImageInput] = useState(false);
   const [replyingTo, setReplyingTo] = useState<CommentWithProfile | null>(null);
   const [typingUsers, setTypingUsers] = useState<string[]>([]);
@@ -67,13 +67,23 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
   const channelRef = useRef<any>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
 
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  const isNearBottom = () => {
+    const container = scrollContainerRef.current;
+    if (!container) return true;
+    const threshold = 100;
+    return container.scrollHeight - container.scrollTop - container.clientHeight < threshold;
+  };
+
+  const scrollToBottom = (force = false) => {
+    if (force || isNearBottom()) {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
   };
 
   const fetchComments = useCallback(async (isInitial = false) => {
-    
+
     const { data, error } = await supabase
       .from('comments')
       .select('*')
@@ -107,7 +117,7 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
 
       // Mentions list is loaded separately, but keep a small fallback cache
       setAllProfiles((prev) => (prev.length ? prev : profilesData || []));
-      
+
       const reactionsByComment = new Map<string, any[]>();
       reactionsResult.data?.forEach((r: any) => {
         if (!reactionsByComment.has(r.comment_id)) {
@@ -131,7 +141,7 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
       const commentsWithProfiles = data.map(c => {
         const commentReactions = reactionsByComment.get(c.id) || [];
         const emojiGroups = new Map<string, { count: number; users: string[]; hasReacted: boolean }>();
-        
+
         commentReactions.forEach(r => {
           if (!emojiGroups.has(r.emoji)) {
             emojiGroups.set(r.emoji, { count: 0, users: [], hasReacted: false });
@@ -158,7 +168,7 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
 
       const commentMap = new Map<string, CommentWithProfile>();
       commentsWithProfiles.forEach(c => commentMap.set(c.id, c));
-      
+
       const rootComments: CommentWithProfile[] = [];
       commentsWithProfiles.forEach(c => {
         if (c.parent_id && commentMap.has(c.parent_id)) {
@@ -171,7 +181,7 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
       });
 
       setComments(rootComments);
-      if (isInitial) setTimeout(scrollToBottom, 100);
+      if (isInitial) setTimeout(() => scrollToBottom(true), 100);
 
       // Mark comments as read (background)
       if (user && commentIds.length > 0) {
@@ -188,11 +198,11 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
           );
           const currentReads = await currentReadsRes.json();
           const readCommentIds = Array.isArray(currentReads) ? currentReads.map((r: any) => r.comment_id) : [];
-          
-          const unreadComments = data.filter(c => 
+
+          const unreadComments = data.filter(c =>
             c.user_id !== user.id && !readCommentIds.includes(c.id)
           );
-          
+
           if (unreadComments.length > 0) {
             await fetch(
               `${import.meta.env.VITE_SUPABASE_URL}/rest/v1/comment_reads`,
@@ -261,7 +271,7 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
       }
       return [...prev, newComment];
     });
-    setTimeout(scrollToBottom, 50);
+    setTimeout(() => scrollToBottom(false), 50);
   }, [profilesMap]);
 
   const handleCommentUpdate = useCallback((payload: any) => {
@@ -406,7 +416,7 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
     }
   };
 
-  const filteredProfiles = allProfiles.filter(p => 
+  const filteredProfiles = allProfiles.filter(p =>
     p.username.toLowerCase().includes(mentionQuery) && p.user_id !== user?.id
   ).slice(0, 5);
 
@@ -415,7 +425,7 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
     const textBeforeCursor = newComment.slice(0, cursorPos);
     const textAfterCursor = newComment.slice(cursorPos);
     const mentionMatch = textBeforeCursor.match(/@(\w*)$/);
-    
+
     if (mentionMatch) {
       const newText = textBeforeCursor.slice(0, -mentionMatch[0].length) + `@${username} ` + textAfterCursor;
       setNewComment(newText);
@@ -448,7 +458,7 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
 
     const tempId = `temp-${Date.now()}`;
     const profile = profilesMap.get(user.id) || allProfiles.find(p => p.user_id === user.id);
-    
+
     const optimisticComment: CommentWithProfile = {
       id: tempId,
       ticket_id: ticketId,
@@ -480,7 +490,7 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
     setImageUrl('');
     setShowImageInput(false);
     setReplyingTo(null);
-    setTimeout(scrollToBottom, 50);
+    setTimeout(() => scrollToBottom(true), 50);
 
     const insertData: any = {
       ticket_id: ticketId,
@@ -528,13 +538,13 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
               replies: (c.replies || []).map((r) =>
                 r.id === tempId
                   ? {
-                      ...r,
-                      id: inserted.id,
-                      created_at: inserted.created_at,
-                      image_url: inserted.image_url,
-                      parent_id: inserted.parent_id,
-                      isOptimistic: false,
-                    }
+                    ...r,
+                    id: inserted.id,
+                    created_at: inserted.created_at,
+                    image_url: inserted.image_url,
+                    parent_id: inserted.parent_id,
+                    isOptimistic: false,
+                  }
                   : r
               ),
             };
@@ -547,13 +557,13 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
         prev.map((c) =>
           c.id === tempId
             ? {
-                ...c,
-                id: inserted.id,
-                created_at: inserted.created_at,
-                image_url: inserted.image_url,
-                parent_id: inserted.parent_id,
-                isOptimistic: false,
-              }
+              ...c,
+              id: inserted.id,
+              created_at: inserted.created_at,
+              image_url: inserted.image_url,
+              parent_id: inserted.parent_id,
+              isOptimistic: false,
+            }
             : c
         )
       );
@@ -564,7 +574,7 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
   const handleEdit = async (commentId: string) => {
     if (!editContent.trim()) return;
 
-    const originalContent = comments.find(c => c.id === commentId)?.content || 
+    const originalContent = comments.find(c => c.id === commentId)?.content ||
       comments.flatMap(c => c.replies || []).find(r => r.id === commentId)?.content;
 
     // Update optimistically
@@ -604,7 +614,7 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
 
   // Optimistic delete
   const handleDelete = async (commentId: string) => {
-    const deletedComment = comments.find(c => c.id === commentId) || 
+    const deletedComment = comments.find(c => c.id === commentId) ||
       comments.flatMap(c => c.replies || []).find(r => r.id === commentId);
     const parentId = deletedComment?.parent_id;
 
@@ -657,7 +667,7 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
         if (comment.id === commentId) {
           const reactions = [...(comment.reactions || [])];
           const existingIdx = reactions.findIndex(r => r.emoji === emoji);
-          
+
           if (hasReacted) {
             // Remove reaction
             if (existingIdx >= 0) {
@@ -704,7 +714,7 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
         .eq('comment_id', commentId)
         .eq('user_id', user.id)
         .eq('emoji', emoji);
-      
+
       if (error) {
         console.error('Remove reaction error:', error);
         fetchComments(false); // Revert by refetching
@@ -713,7 +723,7 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
       const { error } = await supabase
         .from('comment_reactions')
         .insert({ comment_id: commentId, user_id: user.id, emoji });
-      
+
       if (error) {
         console.error('Add reaction error:', error);
         fetchComments(false); // Revert by refetching
@@ -754,18 +764,17 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
           </Avatar>
           <div className="flex-1 min-w-0">
             <div className="inline-block max-w-[85%]">
-              <div className={`rounded-2xl px-3 py-2 border border-border/30 ${
-                isOwner 
-                  ? 'bg-primary/20 rounded-tr-sm' 
-                  : 'bg-card/80 rounded-tl-sm'
-              }`}>
+              <div className={`rounded-2xl px-3 py-2 border border-border/30 ${isOwner
+                ? 'bg-primary/20 rounded-tr-sm'
+                : 'bg-card/80 rounded-tl-sm'
+                }`}>
                 <div className="flex items-center gap-2 mb-0.5">
                   <span className="text-xs font-medium text-foreground">{comment.profiles?.username || 'Unknown'}</span>
                   <span className="text-[10px] text-muted-foreground">
                     {formatDistanceToNow(new Date(comment.created_at), { addSuffix: true })}
                   </span>
                 </div>
-                
+
                 {isEditing ? (
                   <div className="flex gap-2 mt-1">
                     <Input
@@ -784,7 +793,7 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
                 ) : (
                   <p className="text-sm text-foreground/90 whitespace-pre-wrap">{renderContent(comment.content)}</p>
                 )}
-                
+
                 {comment.image_url && !isEditing && (
                   <MediaPreview imageUrl={comment.image_url} className="mt-1.5" />
                 )}
@@ -794,24 +803,23 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
                 <div className="flex items-center gap-1 mt-0.5 ml-1">
                   <CheckCheck className="h-3 w-3 text-primary" />
                   <span className="text-[10px] text-muted-foreground">
-                    Seen by {readByOthers.length === 1 
-                      ? readByOthers[0].username 
+                    Seen by {readByOthers.length === 1
+                      ? readByOthers[0].username
                       : `${readByOthers.length} people`}
                   </span>
                 </div>
               )}
-              
+
               {comment.reactions && comment.reactions.length > 0 && (
                 <div className="flex flex-wrap gap-1 mt-1">
                   {comment.reactions.map((reaction) => (
                     <button
                       key={reaction.emoji}
                       onClick={() => handleReaction(comment.id, reaction.emoji, reaction.hasReacted)}
-                      className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-xs transition-colors ${
-                        reaction.hasReacted 
-                          ? 'bg-primary/20 border border-primary/50' 
-                          : 'bg-muted/50 border border-border/30 hover:bg-muted'
-                      }`}
+                      className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-xs transition-colors ${reaction.hasReacted
+                        ? 'bg-primary/20 border border-primary/50'
+                        : 'bg-muted/50 border border-border/30 hover:bg-muted'
+                        }`}
                     >
                       <span>{reaction.emoji}</span>
                       <span className="text-[10px] text-muted-foreground">{reaction.count}</span>
@@ -819,7 +827,7 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
                   ))}
                 </div>
               )}
-              
+
               <div className="flex items-center gap-1 mt-0.5">
                 {user && !comment.isOptimistic && (
                   <Popover>
@@ -907,7 +915,7 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
         <h3 className="text-lg font-semibold">Comments ({comments.length})</h3>
       </div>
 
-      <div className="flex-1 overflow-y-auto py-4 space-y-3">
+      <div ref={scrollContainerRef} className="flex-1 overflow-y-auto py-4 space-y-3">
         {comments.length === 0 ? (
           <div className="text-center text-muted-foreground py-8">
             No comments yet. Be the first to share your thoughts!
@@ -928,7 +936,7 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
             <span className="w-1.5 h-1.5 bg-primary rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
           </div>
           <span>
-            {typingUsers.length === 1 
+            {typingUsers.length === 1
               ? `${typingUsers[0]} is typing...`
               : `${typingUsers.slice(0, 2).join(', ')}${typingUsers.length > 2 ? ` and ${typingUsers.length - 2} more` : ''} are typing...`
             }
@@ -964,7 +972,7 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
                   onKeyDown={handleKeyDown}
                   className="min-h-[60px] resize-none glass border-border/50 focus:border-primary/50 pr-2"
                 />
-                
+
                 {showMentions && filteredProfiles.length > 0 && (
                   <div className="absolute bottom-full left-0 mb-1 w-64 bg-popover border border-border rounded-md shadow-lg z-50">
                     {filteredProfiles.map((profile, index) => (
@@ -972,9 +980,8 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
                         key={profile.id}
                         type="button"
                         onClick={() => insertMention(profile.username)}
-                        className={`w-full flex items-center gap-2 px-3 py-2 text-sm text-left hover:bg-muted/50 ${
-                          index === mentionIndex ? 'bg-muted/50' : ''
-                        }`}
+                        className={`w-full flex items-center gap-2 px-3 py-2 text-sm text-left hover:bg-muted/50 ${index === mentionIndex ? 'bg-muted/50' : ''
+                          }`}
                       >
                         <Avatar className="h-6 w-6">
                           <AvatarFallback className="bg-primary/20 text-xs">
@@ -987,7 +994,7 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
                   </div>
                 )}
               </div>
-              
+
               {showImageInput && (
                 <Input
                   placeholder="Image URL (optional)"
@@ -1008,7 +1015,7 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
                   <Image className="h-4 w-4 mr-2" />
                   {showImageInput ? 'Hide' : 'Add'} Image
                 </Button>
-                
+
                 <Button type="submit" disabled={!newComment.trim()} className="gap-2 glow-sm">
                   <Send className="h-4 w-4" />
                   {replyingTo ? 'Reply' : 'Send'}
