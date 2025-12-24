@@ -7,18 +7,25 @@ import { Card, CardContent } from '@/components/ui/card';
 import { MediaPreview } from '@/components/MediaPreview';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuthContext } from '@/contexts/AuthContext';
-import { Comment, Profile } from '@/types/database';
+import { Profile } from '@/types/database';
 import { toast } from 'sonner';
 import { formatDistanceToNow } from 'date-fns';
-import { Send, Trash2, Image, MessageCircle } from 'lucide-react';
+import { Send, Trash2, Image, MessageCircle, Reply, X } from 'lucide-react';
 
 interface CommentSectionProps {
   ticketId: string;
 }
 
-interface CommentWithProfile extends Omit<Comment, 'profiles'> {
-  profiles: Profile | null;
+interface CommentWithProfile {
+  id: string;
+  ticket_id: string;
+  user_id: string;
+  content: string;
+  created_at: string;
   image_url?: string | null;
+  parent_id?: string | null;
+  profiles: Profile | null;
+  replies?: CommentWithProfile[];
 }
 
 export function CommentSection({ ticketId }: CommentSectionProps) {
@@ -29,6 +36,7 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [showImageInput, setShowImageInput] = useState(false);
+  const [replyingTo, setReplyingTo] = useState<CommentWithProfile | null>(null);
 
   useEffect(() => {
     fetchComments();
@@ -63,11 +71,30 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
         .in('user_id', userIds);
       
       const profileMap = new Map(profiles?.map(p => [p.user_id, p]) || []);
+      
+      // Build threaded comments
       const commentsWithProfiles = data.map(c => ({
         ...c,
-        profiles: profileMap.get(c.user_id) || null
+        profiles: profileMap.get(c.user_id) || null,
+        replies: [] as CommentWithProfile[]
       }));
-      setComments(commentsWithProfiles as CommentWithProfile[]);
+
+      // Organize into parent-child structure
+      const commentMap = new Map<string, CommentWithProfile>();
+      commentsWithProfiles.forEach(c => commentMap.set(c.id, c));
+      
+      const rootComments: CommentWithProfile[] = [];
+      commentsWithProfiles.forEach(c => {
+        if (c.parent_id && commentMap.has(c.parent_id)) {
+          const parent = commentMap.get(c.parent_id)!;
+          if (!parent.replies) parent.replies = [];
+          parent.replies.push(c);
+        } else if (!c.parent_id) {
+          rootComments.push(c);
+        }
+      });
+
+      setComments(rootComments);
     }
     setLoading(false);
   };
@@ -83,7 +110,8 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
         ticket_id: ticketId,
         user_id: user.id,
         content: newComment.trim(),
-        image_url: imageUrl.trim() || null
+        image_url: imageUrl.trim() || null,
+        parent_id: replyingTo?.id || null
       });
 
     if (error) {
@@ -92,7 +120,8 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
       setNewComment('');
       setImageUrl('');
       setShowImageInput(false);
-      toast.success('Comment posted');
+      setReplyingTo(null);
+      toast.success(replyingTo ? 'Reply posted' : 'Comment posted');
     }
     setSubmitting(false);
   };
@@ -110,6 +139,66 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
     }
   };
 
+  const CommentItem = ({ comment, isReply = false }: { comment: CommentWithProfile; isReply?: boolean }) => (
+    <div className={`${isReply ? 'ml-8 border-l-2 border-border/50 pl-4' : ''}`}>
+      <Card className="glass-hover border-border/50">
+        <CardContent className="pt-4">
+          <div className="flex items-start gap-3">
+            <Avatar className="h-9 w-9 ring-2 ring-border shrink-0">
+              <AvatarFallback className="bg-gradient-to-br from-primary/80 to-purple-600/80 text-primary-foreground text-sm font-medium">
+                {comment.profiles?.username?.charAt(0).toUpperCase() || 'U'}
+              </AvatarFallback>
+            </Avatar>
+            <div className="flex-1 min-w-0 space-y-2">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="font-medium">{comment.profiles?.username || 'Unknown'}</span>
+                <span className="text-xs text-muted-foreground">
+                  {formatDistanceToNow(new Date(comment.created_at), { addSuffix: true })}
+                </span>
+              </div>
+              <p className="text-foreground/90 whitespace-pre-wrap leading-relaxed">{comment.content}</p>
+              
+              {comment.image_url && (
+                <MediaPreview imageUrl={comment.image_url} className="mt-2" />
+              )}
+
+              {user && !isReply && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="text-muted-foreground hover:text-primary -ml-2 mt-1"
+                  onClick={() => setReplyingTo(comment)}
+                >
+                  <Reply className="h-4 w-4 mr-1" />
+                  Reply
+                </Button>
+              )}
+            </div>
+            {user?.id === comment.user_id && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 text-muted-foreground hover:text-destructive hover:bg-destructive/10 shrink-0"
+                onClick={() => handleDelete(comment.id)}
+              >
+                <Trash2 className="h-4 w-4" />
+              </Button>
+            )}
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Render replies */}
+      {comment.replies && comment.replies.length > 0 && (
+        <div className="mt-2 space-y-2">
+          {comment.replies.map((reply) => (
+            <CommentItem key={reply.id} comment={reply} isReply />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-2">
@@ -120,9 +209,24 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
       {user && (
         <Card className="glass border-border/50">
           <CardContent className="pt-4">
+            {replyingTo && (
+              <div className="flex items-center justify-between bg-muted/30 rounded-md p-2 mb-3">
+                <span className="text-sm text-muted-foreground">
+                  Replying to <span className="font-medium text-foreground">{replyingTo.profiles?.username}</span>
+                </span>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-6 w-6"
+                  onClick={() => setReplyingTo(null)}
+                >
+                  <X className="h-4 w-4" />
+                </Button>
+              </div>
+            )}
             <form onSubmit={handleSubmit} className="space-y-3">
               <Textarea
-                placeholder="Write a comment..."
+                placeholder={replyingTo ? "Write a reply..." : "Write a comment..."}
                 value={newComment}
                 onChange={(e) => setNewComment(e.target.value)}
                 className="min-h-[100px] resize-none glass border-border/50 focus:border-primary/50"
@@ -151,7 +255,7 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
                 
                 <Button type="submit" disabled={submitting || !newComment.trim()} className="gap-2 glow-sm">
                   <Send className="h-4 w-4" />
-                  Post Comment
+                  {replyingTo ? 'Post Reply' : 'Post Comment'}
                 </Button>
               </div>
             </form>
@@ -176,40 +280,7 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
           </div>
         ) : (
           comments.map((comment) => (
-            <Card key={comment.id} className="glass-hover border-border/50">
-              <CardContent className="pt-4">
-                <div className="flex items-start gap-3">
-                  <Avatar className="h-9 w-9 ring-2 ring-border shrink-0">
-                    <AvatarFallback className="bg-gradient-to-br from-primary/80 to-purple-600/80 text-primary-foreground text-sm font-medium">
-                      {comment.profiles?.username?.charAt(0).toUpperCase() || 'U'}
-                    </AvatarFallback>
-                  </Avatar>
-                  <div className="flex-1 min-w-0 space-y-2">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="font-medium">{comment.profiles?.username || 'Unknown'}</span>
-                      <span className="text-xs text-muted-foreground">
-                        {formatDistanceToNow(new Date(comment.created_at), { addSuffix: true })}
-                      </span>
-                    </div>
-                    <p className="text-foreground/90 whitespace-pre-wrap leading-relaxed">{comment.content}</p>
-                    
-                    {comment.image_url && (
-                      <MediaPreview imageUrl={comment.image_url} className="mt-2" />
-                    )}
-                  </div>
-                  {user?.id === comment.user_id && (
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-8 w-8 text-muted-foreground hover:text-destructive hover:bg-destructive/10 shrink-0"
-                      onClick={() => handleDelete(comment.id)}
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
+            <CommentItem key={comment.id} comment={comment} />
           ))
         )}
       </div>
