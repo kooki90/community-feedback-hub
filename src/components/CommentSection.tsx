@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
@@ -11,7 +11,7 @@ import { useAuthContext } from '@/contexts/AuthContext';
 import { Profile } from '@/types/database';
 import { toast } from 'sonner';
 import { formatDistanceToNow } from 'date-fns';
-import { Send, Trash2, Image, MessageCircle, Reply, X, Smile } from 'lucide-react';
+import { Send, Trash2, Image, MessageCircle, Reply, X, Smile, Pencil, Check, CheckCheck } from 'lucide-react';
 
 interface CommentSectionProps {
   ticketId: string;
@@ -22,6 +22,11 @@ interface Reaction {
   count: number;
   users: string[];
   hasReacted: boolean;
+}
+
+interface ReadReceipt {
+  user_id: string;
+  username: string;
 }
 
 interface CommentWithProfile {
@@ -35,6 +40,7 @@ interface CommentWithProfile {
   profiles: Profile | null;
   replies?: CommentWithProfile[];
   reactions?: Reaction[];
+  readBy?: ReadReceipt[];
 }
 
 const EMOJI_OPTIONS = ['👍', '❤️', '😂', '😮', '😢', '🔥'];
@@ -49,52 +55,13 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
   const [showImageInput, setShowImageInput] = useState(false);
   const [replyingTo, setReplyingTo] = useState<CommentWithProfile | null>(null);
   const [typingUsers, setTypingUsers] = useState<string[]>([]);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editContent, setEditContent] = useState('');
+  const [profilesMap, setProfilesMap] = useState<Map<string, Profile>>(new Map());
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const channelRef = useRef<any>(null);
 
-  useEffect(() => {
-    fetchComments();
-
-    // Set up realtime for comments
-    const commentsChannel = supabase
-      .channel('comments')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'comments', filter: `ticket_id=eq.${ticketId}` },
-        () => fetchComments()
-      )
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'comment_reactions' },
-        () => fetchComments()
-      )
-      .subscribe();
-
-    // Set up presence for typing indicators
-    const presenceChannel = supabase.channel(`typing:${ticketId}`)
-      .on('presence', { event: 'sync' }, () => {
-        const state = presenceChannel.presenceState();
-        const users: string[] = [];
-        Object.values(state).forEach((presences: any) => {
-          presences.forEach((p: any) => {
-            if (p.typing && p.username && p.user_id !== user?.id) {
-              users.push(p.username);
-            }
-          });
-        });
-        setTypingUsers(users);
-      })
-      .subscribe();
-
-    channelRef.current = presenceChannel;
-
-    return () => {
-      supabase.removeChannel(commentsChannel);
-      supabase.removeChannel(presenceChannel);
-    };
-  }, [ticketId, user?.id]);
-
-  const fetchComments = async () => {
+  const fetchComments = useCallback(async () => {
     setLoading(true);
     const { data, error } = await supabase
       .from('comments')
@@ -111,15 +78,43 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
         supabase.from('comment_reactions').select('*').in('comment_id', commentIds)
       ]);
 
-      const profileMap = new Map(profilesResult.data?.map(p => [p.user_id, p]) || []);
+
+      const newProfilesMap = new Map(profilesResult.data?.map(p => [p.user_id, p]) || []);
+      setProfilesMap(newProfilesMap);
       
       // Group reactions by comment
       const reactionsByComment = new Map<string, any[]>();
-      reactionsResult.data?.forEach(r => {
+      reactionsResult.data?.forEach((r: any) => {
         if (!reactionsByComment.has(r.comment_id)) {
           reactionsByComment.set(r.comment_id, []);
         }
         reactionsByComment.get(r.comment_id)!.push(r);
+      });
+
+      // Group reads by comment - fetch via direct query
+      const readsByComment = new Map<string, ReadReceipt[]>();
+      
+      // Use raw fetch for the new table since types aren't updated yet
+      const readsResponse = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/rest/v1/comment_reads?comment_id=in.(${commentIds.join(',')})`,
+        {
+          headers: {
+            'apikey': import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
+            'Authorization': `Bearer ${(await supabase.auth.getSession()).data.session?.access_token || import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`
+          }
+        }
+      );
+      const readsResultData = await readsResponse.json() as any[];
+      
+      readsResultData?.forEach((r: any) => {
+        if (!readsByComment.has(r.comment_id)) {
+          readsByComment.set(r.comment_id, []);
+        }
+        const profile = newProfilesMap.get(r.user_id);
+        readsByComment.get(r.comment_id)!.push({
+          user_id: r.user_id,
+          username: profile?.username || 'Unknown'
+        });
       });
 
       // Build threaded comments with reactions
@@ -144,9 +139,10 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
 
         return {
           ...c,
-          profiles: profileMap.get(c.user_id) || null,
+          profiles: newProfilesMap.get(c.user_id) || null,
           replies: [] as CommentWithProfile[],
-          reactions
+          reactions,
+          readBy: readsByComment.get(c.id) || []
         };
       });
 
@@ -166,18 +162,95 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
       });
 
       setComments(rootComments);
+
+      // Mark comments as read using fetch API
+      if (user && commentIds.length > 0) {
+        const unreadComments = data.filter(c => 
+          c.user_id !== user.id && 
+          !readsResultData?.some((r: any) => r.comment_id === c.id && r.user_id === user.id)
+        );
+        
+        if (unreadComments.length > 0) {
+          const session = await supabase.auth.getSession();
+          await fetch(
+            `${import.meta.env.VITE_SUPABASE_URL}/rest/v1/comment_reads`,
+            {
+              method: 'POST',
+              headers: {
+                'apikey': import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
+                'Authorization': `Bearer ${session.data.session?.access_token || import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
+                'Content-Type': 'application/json',
+                'Prefer': 'return=minimal'
+              },
+              body: JSON.stringify(unreadComments.map(c => ({ comment_id: c.id, user_id: user.id })))
+            }
+          );
+        }
+      }
     }
     setLoading(false);
-  };
+  }, [ticketId, user]);
+
+  useEffect(() => {
+    fetchComments();
+
+    // Set up realtime subscriptions
+    const channel = supabase
+      .channel(`ticket-comments:${ticketId}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'comments', filter: `ticket_id=eq.${ticketId}` },
+        (payload) => {
+          console.log('Comment change:', payload);
+          fetchComments();
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'comment_reactions' },
+        (payload) => {
+          console.log('Reaction change:', payload);
+          fetchComments();
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'comment_reads' },
+        (payload) => {
+          console.log('Read change:', payload);
+          fetchComments();
+        }
+      )
+      .subscribe();
+
+    // Set up presence for typing indicators
+    const presenceChannel = supabase.channel(`typing:${ticketId}`)
+      .on('presence', { event: 'sync' }, () => {
+        const state = presenceChannel.presenceState();
+        const users: string[] = [];
+        Object.values(state).forEach((presences: any) => {
+          presences.forEach((p: any) => {
+            if (p.typing && p.username && p.user_id !== user?.id) {
+              users.push(p.username);
+            }
+          });
+        });
+        setTypingUsers(users);
+      })
+      .subscribe();
+
+    channelRef.current = presenceChannel;
+
+    return () => {
+      supabase.removeChannel(channel);
+      supabase.removeChannel(presenceChannel);
+    };
+  }, [ticketId, user?.id, fetchComments]);
 
   const handleTyping = async () => {
     if (!user || !channelRef.current) return;
 
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('username')
-      .eq('user_id', user.id)
-      .maybeSingle();
+    const profile = profilesMap.get(user.id);
 
     await channelRef.current.track({
       user_id: user.id,
@@ -220,9 +293,24 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
       setImageUrl('');
       setShowImageInput(false);
       setReplyingTo(null);
-      toast.success(replyingTo ? 'Reply posted' : 'Comment posted');
     }
     setSubmitting(false);
+  };
+
+  const handleEdit = async (commentId: string) => {
+    if (!editContent.trim()) return;
+
+    const { error } = await supabase
+      .from('comments')
+      .update({ content: editContent.trim() })
+      .eq('id', commentId);
+
+    if (error) {
+      toast.error('Failed to edit comment');
+    } else {
+      setEditingId(null);
+      setEditContent('');
+    }
   };
 
   const handleDelete = async (commentId: string) => {
@@ -233,8 +321,6 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
 
     if (error) {
       toast.error('Failed to delete comment');
-    } else {
-      toast.success('Comment deleted');
     }
   };
 
@@ -262,116 +348,165 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
     }
   };
 
-  const CommentItem = ({ comment, isReply = false }: { comment: CommentWithProfile; isReply?: boolean }) => (
-    <div className={`${isReply ? 'ml-10' : ''}`}>
-      <div className="flex items-start gap-2">
-        <Avatar className="h-7 w-7 shrink-0">
-          <AvatarFallback className="bg-gradient-to-br from-primary/80 to-purple-600/80 text-primary-foreground text-xs font-medium">
-            {comment.profiles?.username?.charAt(0).toUpperCase() || 'U'}
-          </AvatarFallback>
-        </Avatar>
-        <div className="flex-1 min-w-0">
-          <div className="inline-block max-w-[85%]">
-            <div className="bg-card/80 rounded-2xl rounded-tl-sm px-3 py-2 border border-border/30">
-              <div className="flex items-center gap-2 mb-0.5">
-                <span className="text-xs font-medium text-foreground">{comment.profiles?.username || 'Unknown'}</span>
-                <span className="text-[10px] text-muted-foreground">
-                  {formatDistanceToNow(new Date(comment.created_at), { addSuffix: true })}
-                </span>
-              </div>
-              <p className="text-sm text-foreground/90 whitespace-pre-wrap">{comment.content}</p>
-              
-              {comment.image_url && (
-                <MediaPreview imageUrl={comment.image_url} className="mt-1.5" />
-              )}
-            </div>
-            
-            {/* Reactions display */}
-            {comment.reactions && comment.reactions.length > 0 && (
-              <div className="flex flex-wrap gap-1 mt-1">
-                {comment.reactions.map((reaction) => (
-                  <button
-                    key={reaction.emoji}
-                    onClick={() => handleReaction(comment.id, reaction.emoji, reaction.hasReacted)}
-                    className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-xs transition-colors ${
-                      reaction.hasReacted 
-                        ? 'bg-primary/20 border border-primary/50' 
-                        : 'bg-muted/50 border border-border/30 hover:bg-muted'
-                    }`}
-                  >
-                    <span>{reaction.emoji}</span>
-                    <span className="text-[10px] text-muted-foreground">{reaction.count}</span>
-                  </button>
-                ))}
-              </div>
-            )}
-            
-            <div className="flex items-center gap-1 mt-0.5">
-              {user && (
-                <Popover>
-                  <PopoverTrigger asChild>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-6 px-2 text-xs text-muted-foreground hover:text-primary"
-                    >
-                      <Smile className="h-3 w-3" />
+  const CommentItem = ({ comment, isReply = false }: { comment: CommentWithProfile; isReply?: boolean }) => {
+    const isEditing = editingId === comment.id;
+    const isOwner = user?.id === comment.user_id;
+    const readByOthers = comment.readBy?.filter(r => r.user_id !== comment.user_id) || [];
+
+    return (
+      <div className={`${isReply ? 'ml-10' : ''}`}>
+        <div className="flex items-start gap-2">
+          <Avatar className="h-7 w-7 shrink-0">
+            <AvatarFallback className="bg-gradient-to-br from-primary/80 to-purple-600/80 text-primary-foreground text-xs font-medium">
+              {comment.profiles?.username?.charAt(0).toUpperCase() || 'U'}
+            </AvatarFallback>
+          </Avatar>
+          <div className="flex-1 min-w-0">
+            <div className="inline-block max-w-[85%]">
+              <div className="bg-card/80 rounded-2xl rounded-tl-sm px-3 py-2 border border-border/30">
+                <div className="flex items-center gap-2 mb-0.5">
+                  <span className="text-xs font-medium text-foreground">{comment.profiles?.username || 'Unknown'}</span>
+                  <span className="text-[10px] text-muted-foreground">
+                    {formatDistanceToNow(new Date(comment.created_at), { addSuffix: true })}
+                  </span>
+                </div>
+                
+                {isEditing ? (
+                  <div className="flex gap-2 mt-1">
+                    <Input
+                      value={editContent}
+                      onChange={(e) => setEditContent(e.target.value)}
+                      className="h-7 text-sm"
+                      autoFocus
+                    />
+                    <Button size="sm" className="h-7 px-2" onClick={() => handleEdit(comment.id)}>
+                      <Check className="h-3 w-3" />
                     </Button>
-                  </PopoverTrigger>
-                  <PopoverContent className="w-auto p-2" side="top">
-                    <div className="flex gap-1">
-                      {EMOJI_OPTIONS.map((emoji) => (
-                        <button
-                          key={emoji}
-                          onClick={() => {
-                            const existing = comment.reactions?.find(r => r.emoji === emoji);
-                            handleReaction(comment.id, emoji, existing?.hasReacted || false);
-                          }}
-                          className="text-lg hover:scale-125 transition-transform p-1"
-                        >
-                          {emoji}
-                        </button>
-                      ))}
-                    </div>
-                  </PopoverContent>
-                </Popover>
+                    <Button size="sm" variant="ghost" className="h-7 px-2" onClick={() => setEditingId(null)}>
+                      <X className="h-3 w-3" />
+                    </Button>
+                  </div>
+                ) : (
+                  <p className="text-sm text-foreground/90 whitespace-pre-wrap">{comment.content}</p>
+                )}
+                
+                {comment.image_url && !isEditing && (
+                  <MediaPreview imageUrl={comment.image_url} className="mt-1.5" />
+                )}
+              </div>
+
+              {/* Read receipts */}
+              {isOwner && readByOthers.length > 0 && (
+                <div className="flex items-center gap-1 mt-0.5 ml-1">
+                  <CheckCheck className="h-3 w-3 text-primary" />
+                  <span className="text-[10px] text-muted-foreground">
+                    Seen by {readByOthers.length === 1 
+                      ? readByOthers[0].username 
+                      : `${readByOthers.length} people`}
+                  </span>
+                </div>
               )}
-              {user && !isReply && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-6 px-2 text-xs text-muted-foreground hover:text-primary"
-                  onClick={() => setReplyingTo(comment)}
-                >
-                  <Reply className="h-3 w-3 mr-1" />
-                  Reply
-                </Button>
+              
+              {/* Reactions display */}
+              {comment.reactions && comment.reactions.length > 0 && (
+                <div className="flex flex-wrap gap-1 mt-1">
+                  {comment.reactions.map((reaction) => (
+                    <button
+                      key={reaction.emoji}
+                      onClick={() => handleReaction(comment.id, reaction.emoji, reaction.hasReacted)}
+                      className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-xs transition-colors ${
+                        reaction.hasReacted 
+                          ? 'bg-primary/20 border border-primary/50' 
+                          : 'bg-muted/50 border border-border/30 hover:bg-muted'
+                      }`}
+                    >
+                      <span>{reaction.emoji}</span>
+                      <span className="text-[10px] text-muted-foreground">{reaction.count}</span>
+                    </button>
+                  ))}
+                </div>
               )}
-              {user?.id === comment.user_id && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-6 px-2 text-xs text-muted-foreground hover:text-destructive"
-                  onClick={() => handleDelete(comment.id)}
-                >
-                  <Trash2 className="h-3 w-3" />
-                </Button>
-              )}
+              
+              <div className="flex items-center gap-1 mt-0.5">
+                {user && (
+                  <Popover>
+                    <PopoverTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-6 px-2 text-xs text-muted-foreground hover:text-primary"
+                      >
+                        <Smile className="h-3 w-3" />
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-auto p-2" side="top">
+                      <div className="flex gap-1">
+                        {EMOJI_OPTIONS.map((emoji) => (
+                          <button
+                            key={emoji}
+                            onClick={() => {
+                              const existing = comment.reactions?.find(r => r.emoji === emoji);
+                              handleReaction(comment.id, emoji, existing?.hasReacted || false);
+                            }}
+                            className="text-lg hover:scale-125 transition-transform p-1"
+                          >
+                            {emoji}
+                          </button>
+                        ))}
+                      </div>
+                    </PopoverContent>
+                  </Popover>
+                )}
+                {user && !isReply && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-6 px-2 text-xs text-muted-foreground hover:text-primary"
+                    onClick={() => setReplyingTo(comment)}
+                  >
+                    <Reply className="h-3 w-3 mr-1" />
+                    Reply
+                  </Button>
+                )}
+                {isOwner && !isEditing && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-6 px-2 text-xs text-muted-foreground hover:text-primary"
+                    onClick={() => {
+                      setEditingId(comment.id);
+                      setEditContent(comment.content);
+                    }}
+                  >
+                    <Pencil className="h-3 w-3" />
+                  </Button>
+                )}
+                {isOwner && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-6 px-2 text-xs text-muted-foreground hover:text-destructive"
+                    onClick={() => handleDelete(comment.id)}
+                  >
+                    <Trash2 className="h-3 w-3" />
+                  </Button>
+                )}
+              </div>
             </div>
           </div>
         </div>
-      </div>
 
-      {/* Render replies */}
-      {comment.replies && comment.replies.length > 0 && (
-        <div className="mt-1.5 space-y-1.5">
-          {comment.replies.map((reply) => (
-            <CommentItem key={reply.id} comment={reply} isReply />
-          ))}
-        </div>
-      )}
-    </div>
-  );
+        {/* Render replies */}
+        {comment.replies && comment.replies.length > 0 && (
+          <div className="mt-1.5 space-y-1.5">
+            {comment.replies.map((reply) => (
+              <CommentItem key={reply.id} comment={reply} isReply />
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  };
 
   return (
     <div className="space-y-6">
@@ -450,7 +585,7 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
 
       {/* Typing indicator */}
       {typingUsers.length > 0 && (
-        <div className="flex items-center gap-2 text-sm text-muted-foreground animate-pulse">
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
           <div className="flex gap-1">
             <span className="w-1.5 h-1.5 bg-primary rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
             <span className="w-1.5 h-1.5 bg-primary rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
