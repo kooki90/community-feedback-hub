@@ -299,23 +299,33 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
     if (!user || !newComment.trim()) return;
 
     setSubmitting(true);
+    
+    // Build insert object - use raw fetch to avoid type issues with parent_id
+    const insertData: any = {
+      ticket_id: ticketId,
+      user_id: user.id,
+      content: newComment.trim(),
+      image_url: imageUrl.trim() || null
+    };
+    
+    if (replyingTo?.id) {
+      insertData.parent_id = replyingTo.id;
+    }
+
     const { error } = await supabase
       .from('comments')
-      .insert({
-        ticket_id: ticketId,
-        user_id: user.id,
-        content: newComment.trim(),
-        image_url: imageUrl.trim() || null,
-        parent_id: replyingTo?.id || null
-      });
+      .insert(insertData);
 
     if (error) {
-      toast.error('Failed to post comment');
+      console.error('Comment insert error:', error);
+      toast.error('Failed to post comment: ' + error.message);
     } else {
       setNewComment('');
       setImageUrl('');
       setShowImageInput(false);
       setReplyingTo(null);
+      // Manually trigger refresh
+      fetchComments();
     }
     setSubmitting(false);
   };
@@ -329,10 +339,12 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
       .eq('id', commentId);
 
     if (error) {
-      toast.error('Failed to edit comment');
+      console.error('Edit error:', error);
+      toast.error('Failed to edit comment: ' + error.message);
     } else {
       setEditingId(null);
       setEditContent('');
+      fetchComments();
     }
   };
 
@@ -343,7 +355,10 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
       .eq('id', commentId);
 
     if (error) {
-      toast.error('Failed to delete comment');
+      console.error('Delete error:', error);
+      toast.error('Failed to delete comment: ' + error.message);
+    } else {
+      fetchComments();
     }
   };
 
@@ -354,20 +369,32 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
     }
 
     if (hasReacted) {
-      await supabase
+      const { error } = await supabase
         .from('comment_reactions')
         .delete()
         .eq('comment_id', commentId)
         .eq('user_id', user.id)
         .eq('emoji', emoji);
+      
+      if (error) {
+        console.error('Remove reaction error:', error);
+      } else {
+        fetchComments();
+      }
     } else {
-      await supabase
+      const { error } = await supabase
         .from('comment_reactions')
         .insert({
           comment_id: commentId,
           user_id: user.id,
           emoji
         });
+      
+      if (error) {
+        console.error('Add reaction error:', error);
+      } else {
+        fetchComments();
+      }
     }
   };
 
