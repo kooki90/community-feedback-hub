@@ -83,6 +83,10 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
   };
 
   const fetchComments = useCallback(async (isInitial = false) => {
+    // Save scroll position before fetching (to restore after state update)
+    const container = scrollContainerRef.current;
+    const savedScrollTop = container?.scrollTop ?? 0;
+    const savedScrollHeight = container?.scrollHeight ?? 0;
 
     const { data, error } = await supabase
       .from('comments')
@@ -181,6 +185,16 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
       });
 
       setComments(rootComments);
+
+      // Restore scroll position after state update (for non-initial loads)
+      if (!isInitial && container) {
+        requestAnimationFrame(() => {
+          const newScrollHeight = container.scrollHeight;
+          const scrollDiff = newScrollHeight - savedScrollHeight;
+          container.scrollTop = savedScrollTop + scrollDiff;
+        });
+      }
+
       if (isInitial) setTimeout(() => scrollToBottom(true), 100);
 
       // Mark comments as read (background)
