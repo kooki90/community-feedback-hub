@@ -51,7 +51,7 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
   const [comments, setComments] = useState<CommentWithProfile[]>([]);
   const [newComment, setNewComment] = useState('');
   const [imageUrl, setImageUrl] = useState('');
-  const [initialLoading, setInitialLoading] = useState(true);
+  
   
   const [showImageInput, setShowImageInput] = useState(false);
   const [replyingTo, setReplyingTo] = useState<CommentWithProfile | null>(null);
@@ -73,7 +73,6 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
   };
 
   const fetchComments = useCallback(async (isInitial = false) => {
-    if (isInitial) setInitialLoading(true);
     
     const { data, error } = await supabase
       .from('comments')
@@ -87,7 +86,6 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
 
       if (commentIds.length === 0) {
         setComments([]);
-        if (isInitial) setInitialLoading(false);
         return;
       }
 
@@ -215,8 +213,101 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
         }
       }
     }
-    if (isInitial) setInitialLoading(false);
   }, [ticketId, user]);
+
+  // Handlers for realtime updates (single-comment updates)
+  const handleCommentInsert = useCallback(async (payload: any) => {
+    const newRow = payload.new;
+    // Skip if we already have this comment (optimistic)
+    setComments((prev) => {
+      const allIds = prev.flatMap((c) => [c.id, ...(c.replies || []).map((r) => r.id)]);
+      if (allIds.includes(newRow.id)) return prev;
+      return prev; // will add below after profile fetch
+    });
+
+    // Fetch profile for new comment author
+    let profile = profilesMap.get(newRow.user_id);
+    if (!profile) {
+      const { data } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('user_id', newRow.user_id)
+        .maybeSingle();
+      if (data) {
+        profile = data;
+        setProfilesMap((prev) => new Map(prev).set(newRow.user_id, data));
+      }
+    }
+
+    const newComment: CommentWithProfile = {
+      ...newRow,
+      profiles: profile || null,
+      replies: [],
+      reactions: [],
+      readBy: [],
+    };
+
+    setComments((prev) => {
+      // Check again for duplicates
+      const allIds = prev.flatMap((c) => [c.id, ...(c.replies || []).map((r) => r.id)]);
+      if (allIds.includes(newRow.id)) return prev;
+
+      if (newRow.parent_id) {
+        return prev.map((c) =>
+          c.id === newRow.parent_id
+            ? { ...c, replies: [...(c.replies || []), newComment] }
+            : c
+        );
+      }
+      return [...prev, newComment];
+    });
+    setTimeout(scrollToBottom, 50);
+  }, [profilesMap]);
+
+  const handleCommentUpdate = useCallback((payload: any) => {
+    const updated = payload.new;
+    setComments((prev) =>
+      prev.map((c) => {
+        if (c.id === updated.id) {
+          return { ...c, content: updated.content, image_url: updated.image_url };
+        }
+        if (c.replies) {
+          return {
+            ...c,
+            replies: c.replies.map((r) =>
+              r.id === updated.id
+                ? { ...r, content: updated.content, image_url: updated.image_url }
+                : r
+            ),
+          };
+        }
+        return c;
+      })
+    );
+  }, []);
+
+  const handleCommentDelete = useCallback((payload: any) => {
+    const deletedId = payload.old.id;
+    setComments((prev) => {
+      // Remove from root
+      const filtered = prev.filter((c) => c.id !== deletedId);
+      // Remove from replies
+      return filtered.map((c) => ({
+        ...c,
+        replies: (c.replies || []).filter((r) => r.id !== deletedId),
+      }));
+    });
+  }, []);
+
+  const handleReactionChange = useCallback(() => {
+    // Reactions are quick - just refetch to keep it simple
+    fetchComments(false);
+  }, [fetchComments]);
+
+  const handleReadChange = useCallback(() => {
+    // Read receipts change often - just refetch
+    fetchComments(false);
+  }, [fetchComments]);
 
   useEffect(() => {
     fetchComments(true);
@@ -225,18 +316,28 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
       .channel(`ticket-comments:${ticketId}`)
       .on(
         'postgres_changes',
-        { event: '*', schema: 'public', table: 'comments', filter: `ticket_id=eq.${ticketId}` },
-        () => fetchComments(false)
+        { event: 'INSERT', schema: 'public', table: 'comments', filter: `ticket_id=eq.${ticketId}` },
+        handleCommentInsert
+      )
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'comments', filter: `ticket_id=eq.${ticketId}` },
+        handleCommentUpdate
+      )
+      .on(
+        'postgres_changes',
+        { event: 'DELETE', schema: 'public', table: 'comments', filter: `ticket_id=eq.${ticketId}` },
+        handleCommentDelete
       )
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'comment_reactions' },
-        () => fetchComments(false)
+        handleReactionChange
       )
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'comment_reads' },
-        () => fetchComments(false)
+        handleReadChange
       )
       .subscribe();
 
@@ -261,7 +362,7 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
       supabase.removeChannel(channel);
       supabase.removeChannel(presenceChannel);
     };
-  }, [ticketId, user?.id, fetchComments]);
+  }, [ticketId, user?.id, fetchComments, handleCommentInsert, handleCommentUpdate, handleCommentDelete, handleReactionChange, handleReadChange]);
 
   const handleTyping = async () => {
     if (!user || !channelRef.current) return;
@@ -807,9 +908,7 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
       </div>
 
       <div className="flex-1 overflow-y-auto py-4 space-y-3">
-        {initialLoading ? (
-          <div className="text-center text-muted-foreground py-8">Loading comments...</div>
-        ) : comments.length === 0 ? (
+        {comments.length === 0 ? (
           <div className="text-center text-muted-foreground py-8">
             No comments yet. Be the first to share your thoughts!
           </div>
