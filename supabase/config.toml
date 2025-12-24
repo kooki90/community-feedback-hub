@@ -2,3 +2,6 @@ project_id = "khdmkttpqknaypfuqwbp"
 
 [functions.admin-login]
 verify_jwt = false
+
+[functions.admin-delete-ticket]
+verify_jwt = false
