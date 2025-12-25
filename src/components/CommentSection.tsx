@@ -85,8 +85,8 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
   };
 
   const fetchComments = useCallback(async (isInitial = false) => {
-    // Save scroll position before fetching (to restore after state update)
     const container = scrollContainerRef.current;
+    const wasNearBottom = isNearBottom();
     const savedScrollTop = container?.scrollTop ?? 0;
     const savedScrollHeight = container?.scrollHeight ?? 0;
 
@@ -121,7 +121,6 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
       const newProfilesMap = new Map(profilesData?.map((p) => [p.user_id, p]) || []);
       setProfilesMap(newProfilesMap);
 
-      // Mentions list is loaded separately, but keep a small fallback cache
       setAllProfiles((prev) => (prev.length ? prev : profilesData || []));
 
       const reactionsByComment = new Map<string, any[]>();
@@ -188,16 +187,19 @@ export function CommentSection({ ticketId }: CommentSectionProps) {
 
       setComments(rootComments);
 
-      // Restore scroll position after state update (for non-initial loads)
-      if (!isInitial && container) {
+      if (isInitial) {
+        setTimeout(() => scrollToBottom(true), 100);
+      } else if (container) {
         requestAnimationFrame(() => {
-          const newScrollHeight = container.scrollHeight;
-          const scrollDiff = newScrollHeight - savedScrollHeight;
-          container.scrollTop = savedScrollTop + scrollDiff;
+          if (wasNearBottom) {
+            container.scrollTop = container.scrollHeight;
+          } else {
+            const newScrollHeight = container.scrollHeight;
+            const scrollDiff = newScrollHeight - savedScrollHeight;
+            container.scrollTop = savedScrollTop + scrollDiff;
+          }
         });
       }
-
-      if (isInitial) setTimeout(() => scrollToBottom(true), 100);
 
       // Mark comments as read (background)
       if (user && commentIds.length > 0) {
